@@ -2,6 +2,12 @@
 > **Production-Grade LLM Middleware, Intelligent Routing, Semantic Caching & Telemetry Engine**  
 > *Sub-15ms proxy overhead · In-Flight PII Redaction · Circuit Breaker Fallbacks · Anti-AI-Slop Developer Console*
 
+[![CI Test Suite](https://github.com/vhmns14/albatross-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/vhmns14/albatross-gateway/actions)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-albatross--gateway.style.dev-00f2fe?style=flat&logo=cloudflare)](https://albatross-gateway.style.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg)](https://opensource.org/licenses/MIT)
+
+🌐 **Live Production Console:** [https://albatross-gateway.style.dev](https://albatross-gateway.style.dev)
+
 ---
 
 ## ⚡ The Problem & Why Albatross Was Built
