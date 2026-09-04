@@ -12,7 +12,20 @@ import { CONFIG } from "../config";
 import { safeCompare, getClientIp, checkRateLimit } from "../middleware/auth";
 import { handleChatCompletions } from "../proxy/handler";
 
+// In-memory rate limiting and lockout map for admin authentication attempts
 const adminLockouts = new Map<string, { failedAttempts: number; lockedUntil: number }>();
+let globalFailures: number[] = [];
+
+// Clean up stale admin lockout entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, data] of adminLockouts.entries()) {
+    if (data.lockedUntil > 0 && data.lockedUntil < now) {
+      adminLockouts.delete(ip);
+    }
+  }
+  globalFailures = globalFailures.filter((t) => now - t < 60_000);
+}, 300_000);
 
 export function verifyAdmin(req: Request): boolean {
   const adminKey = req.headers.get("x-admin-key") || "";
@@ -22,17 +35,27 @@ export function verifyAdmin(req: Request): boolean {
 export async function handleConsoleApi(req: Request, path: string): Promise<Response> {
   const method = req.method;
 
-  // 0. Admin Verification Endpoint with Brute-Force Lockout Protection
+  // 0. Admin Verification Endpoint with Brute-Force Lockout Protection & Progressive Throttling
   if (path === "/api/admin/verify" && method === "POST") {
     const clientIp = getClientIp(req);
     const now = Date.now();
     const lockout = adminLockouts.get(clientIp);
 
+    // Check IP-based lockout
     if (lockout && lockout.lockedUntil > now) {
       const waitSecs = Math.ceil((lockout.lockedUntil - now) / 1000);
       return Response.json(
-        { success: false, error: `Too many failed admin login attempts. Locked out for ${waitSecs}s.` },
-        { status: 429 }
+        { success: false, error: `Too many failed login attempts. Locked out for ${waitSecs}s.` },
+        { status: 429, headers: { "Retry-After": waitSecs.toString() } }
+      );
+    }
+
+    // Check global failure burst (anti-distributed brute-force)
+    const recentGlobalFailures = globalFailures.filter((t) => now - t < 60_000);
+    if (recentGlobalFailures.length >= 15) {
+      return Response.json(
+        { success: false, error: "Global rate limit reached for admin authentication. Please wait 1 minute." },
+        { status: 429, headers: { "Retry-After": "60" } }
       );
     }
 
@@ -44,19 +67,26 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
       return Response.json({ success: true, isAdmin: true });
     }
 
+    // Record failure
+    recentGlobalFailures.push(now);
+    globalFailures = recentGlobalFailures;
+
+    // Artificial delay to throttle automated credential stuffers
+    await Bun.sleep(500);
+
     const attempts = (lockout?.failedAttempts || 0) + 1;
     if (attempts >= 5) {
       adminLockouts.set(clientIp, { failedAttempts: attempts, lockedUntil: now + 5 * 60_000 });
       return Response.json(
         { success: false, error: "Too many failed attempts. Account locked out for 5 minutes." },
-        { status: 429 }
+        { status: 429, headers: { "Retry-After": "300" } }
       );
     } else {
       adminLockouts.set(clientIp, { failedAttempts: attempts, lockedUntil: 0 });
     }
 
     return Response.json(
-      { success: false, error: `Invalid admin password. (${5 - attempts} attempts remaining)` },
+      { success: false, error: `Invalid admin password. (${5 - attempts} attempts remaining before lockout)` },
       { status: 401 }
     );
   }
@@ -68,28 +98,48 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
     return Response.json({ ...data, providers });
   }
 
-  // 2. Traces List (Public Read-Only)
+  // 2. Traces List (Public Telemetry View with Sensitive Data Masked)
   if (path === "/api/traces" && method === "GET") {
+    const isAdmin = verifyAdmin(req);
     const traces = telemetry.getRecentTraces(50);
+
+    if (!isAdmin) {
+      // Mask key_id, costUsd, clientIp, and raw error messages for non-admin viewers
+      const safeTraces = traces.map((t: any) => ({
+        traceId: t.traceId,
+        endpoint: t.endpoint,
+        modelRequested: t.modelRequested,
+        providerUsed: t.providerUsed,
+        modelUsed: t.modelUsed,
+        statusCode: t.statusCode,
+        isCacheHit: t.isCacheHit,
+        cacheSimilarity: t.cacheSimilarity,
+        piiRedactedCount: t.piiRedactedCount,
+        latencyMs: t.latencyMs,
+        createdAt: t.createdAt,
+        keyId: undefined,
+        costUsd: undefined,
+        totalTokens: undefined,
+        errorMessage: t.errorMessage ? "[Error Logged - Admin Inspection Only]" : null,
+      }));
+      return Response.json({ traces: safeTraces });
+    }
+
     return Response.json({ traces });
   }
 
-  // 3. Trace Details (Public Read-Only with Sensitive Data Masking for Non-Admins)
+  // 3. Trace Details (Strictly Admin-Only to prevent inspecting client IPs, tokens, and payloads)
   if (path.startsWith("/api/traces/") && method === "GET") {
+    if (!verifyAdmin(req)) {
+      return Response.json(
+        { error: "Forbidden: Deep trace inspection and audit payloads are restricted to administrators." },
+        { status: 403 }
+      );
+    }
     const traceId = path.replace("/api/traces/", "");
     const trace = telemetry.getTraceDetail(traceId);
     if (!trace) {
       return Response.json({ error: "Trace not found" }, { status: 404 });
-    }
-    const isAdmin = verifyAdmin(req);
-    if (!isAdmin) {
-      return Response.json({
-        trace: {
-          ...trace,
-          client_ip: trace.client_ip ? trace.client_ip.split(".").slice(0, 2).join(".") + ".x.x" : "x.x.x.x",
-          key_id: trace.key_id ? trace.key_id.slice(0, 7) + "..." : null,
-        },
-      });
     }
     return Response.json({ trace });
   }
@@ -126,7 +176,7 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
     return Response.json({ error: "Missing providerId" }, { status: 400 });
   }
 
-  // 5. Semantic Cache Management (Safe against prompt leakage)
+  // 5. Semantic Cache Management (Public view strips prompt_raw completely)
   if (path === "/api/cache" && method === "GET") {
     const isAdmin = verifyAdmin(req);
     const stats = semanticCache.getStats(isAdmin);
@@ -153,8 +203,15 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
     return Response.json({ success: true, purgedCount: changes });
   }
 
-  // 6. Virtual Keys Management
+  // 6. Virtual Keys Management (Strictly Admin-Only)
   if (path === "/api/keys" && method === "GET") {
+    if (!verifyAdmin(req)) {
+      return Response.json(
+        { error: "Forbidden: Access to virtual key inventory and quota limits requires administrator privileges." },
+        { status: 403 }
+      );
+    }
+
     const keys = db
       .query(`
         SELECT id, name, prefix, spend_limit_usd as spendLimitUsd, current_spend_usd as currentSpendUsd, rate_limit_rpm as rateLimitRpm, is_active as isActive, created_at as createdAt

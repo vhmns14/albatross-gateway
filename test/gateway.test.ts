@@ -101,18 +101,16 @@ describe("2. Semantic Caching Engine & Multi-Tenant Isolation", () => {
     expect(lookupFrench.cachedResponse.choices[0].message.content).toBe("Bonjour");
   });
 
-  test("Masks raw prompt snippets for public telemetry view (HIGH-05 fix)", async () => {
+  test("Completely strips prompt_raw for public telemetry view (Audit Point 1 fix)", async () => {
     const statsPublic = semanticCache.getStats(false);
     for (const query of statsPublic.topQueries) {
-      if (query.prompt_raw) {
-        expect(query.prompt_raw).toContain("[Protected Query]");
-      }
+      expect((query as any).prompt_raw).toBeUndefined();
+      expect(query.prompt_preview).toBe("[Protected by Albatross Guardrails]");
     }
 
     const statsAdmin = semanticCache.getStats(true);
-    // Admin sees unmasked query if present
-    if (statsAdmin.topQueries.length > 0 && statsAdmin.topQueries[0].prompt_raw) {
-      expect(statsAdmin.topQueries[0].prompt_raw).not.toContain("[Protected Query]");
+    if (statsAdmin.topQueries.length > 0) {
+      expect(statsAdmin.topQueries[0].prompt_raw).toBeDefined();
     }
   });
 });
@@ -164,3 +162,46 @@ describe("4. Security Utilities & Timing Attacks", () => {
     expect(safeCompare("", "something")).toBe(false);
   });
 });
+
+describe("5. Console API & Reconnaissance Protections (Audit Points 1-4)", () => {
+  test("Blocks unauthenticated access to /api/keys with 403 Forbidden", async () => {
+    const { handleConsoleApi } = await import("../src/api/console");
+    const req = new Request("http://localhost:8788/api/keys", { method: "GET" });
+    const res = await handleConsoleApi(req, "/api/keys");
+    expect(res.status).toBe(403);
+  });
+
+  test("Allows authenticated admin access to /api/keys", async () => {
+    const { handleConsoleApi } = await import("../src/api/console");
+    const { CONFIG } = await import("../src/config");
+    const req = new Request("http://localhost:8788/api/keys", {
+      method: "GET",
+      headers: { "x-admin-key": CONFIG.ADMIN_PASSWORD },
+    });
+    const res = await handleConsoleApi(req, "/api/keys");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data.keys)).toBe(true);
+  });
+
+  test("Restricts /api/traces/:id deep inspection to admin with 403 Forbidden", async () => {
+    const { handleConsoleApi } = await import("../src/api/console");
+    const req = new Request("http://localhost:8788/api/traces/some_trace_id", { method: "GET" });
+    const res = await handleConsoleApi(req, "/api/traces/some_trace_id");
+    expect(res.status).toBe(403);
+  });
+
+  test("Sanitizes sensitive cost, tokens, and key IDs in public /api/traces", async () => {
+    const { handleConsoleApi } = await import("../src/api/console");
+    const req = new Request("http://localhost:8788/api/traces", { method: "GET" });
+    const res = await handleConsoleApi(req, "/api/traces");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    for (const t of data.traces) {
+      expect(t.keyId).toBeUndefined();
+      expect(t.costUsd).toBeUndefined();
+      expect(t.clientIp).toBeUndefined();
+    }
+  });
+});
+

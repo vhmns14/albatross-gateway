@@ -264,14 +264,14 @@ export class SemanticCache {
       )
       .all() as any[];
 
-    // Mask prompt_raw if not authenticated admin to protect user privacy
+    // Strip prompt_raw completely if not authenticated admin to prevent user prompt exposure
     const safeTopQueries = topQueries.map((q) => ({
-      ...q,
-      prompt_raw: isAdmin
-        ? q.prompt_raw
-        : q.prompt_raw
-        ? `${q.prompt_raw.slice(0, 15)}... [Protected Query]`
-        : "",
+      id: q.id,
+      model: q.model,
+      hit_count: q.hit_count,
+      last_hit_at: q.last_hit_at,
+      prompt_preview: isAdmin ? q.prompt_raw : "[Protected by Albatross Guardrails]",
+      ...(isAdmin ? { prompt_raw: q.prompt_raw } : {}),
     }));
 
     return {

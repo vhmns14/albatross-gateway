@@ -167,10 +167,16 @@ export function App() {
 
   const fetchKeys = async () => {
     try {
-      const res = await fetch("/api/keys");
+      const headers: Record<string, string> = {};
+      if (isAdmin && adminPassword) {
+        headers["x-admin-key"] = adminPassword;
+      }
+      const res = await fetch("/api/keys", { headers });
       if (res.ok) {
         const data = await res.json();
         setKeys(data.keys || []);
+      } else if (res.status === 403) {
+        setKeys([]);
       }
     } catch (e) {
       console.error(e);
@@ -187,11 +193,19 @@ export function App() {
     if (activeTab === "traces") fetchTraces();
     if (activeTab === "cache") fetchCache();
     if (activeTab === "keys") fetchKeys();
-  }, [activeTab]);
+  }, [activeTab, isAdmin]);
 
   const viewTraceDetail = async (traceId: string) => {
+    if (!isAdmin) {
+      setShowAdminModal(true);
+      return;
+    }
     try {
-      const res = await fetch(`/api/traces/${traceId}`);
+      const headers: Record<string, string> = {};
+      if (isAdmin && adminPassword) {
+        headers["x-admin-key"] = adminPassword;
+      }
+      const res = await fetch(`/api/traces/${traceId}`, { headers });
       if (res.ok) {
         const data = await res.json();
         setSelectedTrace(data.trace);
@@ -1146,70 +1160,91 @@ export function App() {
             </div>
 
             {/* Virtual Keys Table */}
-            <div className="bg-infra-900 border border-infra-800 rounded overflow-hidden">
-              <table className="w-full text-left text-xs font-mono">
-                <thead className="bg-infra-850/80 border-b border-infra-800 text-zinc-400">
-                  <tr>
-                    <th className="py-2.5 px-3">KEY NAME</th>
-                    <th className="py-2.5 px-3">PREFIX</th>
-                    <th className="py-2.5 px-3">SPEND / LIMIT (USD)</th>
-                    <th className="py-2.5 px-3">RATE LIMIT</th>
-                    <th className="py-2.5 px-3">STATUS</th>
-                    <th className="py-2.5 px-3">ACTION</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-infra-800 text-zinc-300">
-                  {keys.map((k) => (
-                    <tr key={k.id} className="hover:bg-infra-850/60">
-                      <td className="py-2.5 px-3 font-semibold text-white">{k.name}</td>
-                      <td className="py-2.5 px-3 text-zinc-400 font-mono">
-                        {!isAdmin && k.prefix.includes("root") ? "sk-albatross-root-****" : k.prefix}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-[11px]">
-                            <span>${k.currentSpendUsd.toFixed(2)}</span>
-                            <span className="text-zinc-500">${k.spendLimitUsd.toFixed(2)}</span>
-                          </div>
-                          <div className="w-36 bg-infra-800 h-1.5 rounded overflow-hidden">
-                            <div
-                              className="bg-emerald-500 h-full"
-                              style={{
-                                width: `${Math.min(100, (k.currentSpendUsd / k.spendLimitUsd) * 100)}%`,
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 text-zinc-400">{k.rateLimitRpm} RPM</td>
-                      <td className="py-2.5 px-3">
-                        {k.isActive ? (
-                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px]">
-                            ACTIVE
-                          </span>
-                        ) : (
-                          <span className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/30 text-[10px]">
-                            REVOKED
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        {isAdmin && k.isActive ? (
-                          <button
-                            onClick={() => handleRevokeKey(k.id)}
-                            className="text-red-400 hover:text-red-300 text-[11px]"
-                          >
-                            Revoke
-                          </button>
-                        ) : (
-                          <span className="text-zinc-600 text-[10px]">—</span>
-                        )}
-                      </td>
+            {!isAdmin ? (
+              <div className="bg-infra-900 border border-infra-800 rounded-lg p-10 text-center space-y-4 font-mono">
+                <div className="inline-flex p-3 rounded-full bg-infra-850 border border-infra-800 text-amber-400">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-white">Virtual Key Inventory Protected</h3>
+                  <p className="text-xs text-zinc-400 max-w-md mx-auto leading-relaxed">
+                    Virtual API key inventories, budget quotas, and rate-limit allocations are restricted to verified administrators to prevent reconnaissance and quota scraping.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowAdminModal(true)}
+                  className="px-4 py-2 bg-white text-zinc-950 font-semibold rounded text-xs hover:bg-zinc-200 transition inline-flex items-center gap-2"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Unlock Admin Mode to View Keys</span>
+                </button>
+              </div>
+            ) : (
+              <div className="bg-infra-900 border border-infra-800 rounded overflow-hidden">
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="bg-infra-850/80 border-b border-infra-800 text-zinc-400">
+                    <tr>
+                      <th className="py-2.5 px-3">KEY NAME</th>
+                      <th className="py-2.5 px-3">PREFIX</th>
+                      <th className="py-2.5 px-3">SPEND / LIMIT (USD)</th>
+                      <th className="py-2.5 px-3">RATE LIMIT</th>
+                      <th className="py-2.5 px-3">STATUS</th>
+                      <th className="py-2.5 px-3">ACTION</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-infra-800 text-zinc-300">
+                    {keys.map((k) => (
+                      <tr key={k.id} className="hover:bg-infra-850/60">
+                        <td className="py-2.5 px-3 font-semibold text-white">{k.name}</td>
+                        <td className="py-2.5 px-3 text-zinc-400 font-mono">
+                          {k.prefix}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-[11px]">
+                              <span>${k.currentSpendUsd.toFixed(2)}</span>
+                              <span className="text-zinc-500">${k.spendLimitUsd.toFixed(2)}</span>
+                            </div>
+                            <div className="w-full bg-infra-950 h-1.5 rounded-full overflow-hidden">
+                              <div
+                                className="bg-emerald-500 h-full rounded-full"
+                                style={{
+                                  width: `${Math.min(100, (k.currentSpendUsd / k.spendLimitUsd) * 100)}%`,
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3">{k.rateLimitRpm} RPM</td>
+                        <td className="py-2.5 px-3">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              k.isActive
+                                ? "bg-emerald-950/60 text-emerald-400 border border-emerald-800/60"
+                                : "bg-red-950/60 text-red-400 border border-red-800/60"
+                            }`}
+                          >
+                            {k.isActive ? "ACTIVE" : "REVOKED"}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {k.isActive ? (
+                            <button
+                              onClick={() => handleRevokeKey(k.id)}
+                              className="text-red-400 hover:text-red-300 text-[11px]"
+                            >
+                              Revoke
+                            </button>
+                          ) : (
+                            <span className="text-zinc-600 text-[10px]">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {/* Code Snippets for Developers */}
             <div className="bg-infra-900 border border-infra-800 rounded p-4 space-y-3 font-mono text-xs">

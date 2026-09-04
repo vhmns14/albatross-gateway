@@ -6,7 +6,7 @@
 import { handleChatCompletions, handleListModels } from "./proxy/handler";
 import { handleConsoleApi } from "./api/console";
 import { generateLocalEmbedding } from "./cache/semantic";
-import { authenticateKey } from "./middleware/auth";
+import { authenticateKey, safeCompare } from "./middleware/auth";
 import { CONFIG } from "./config";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -46,20 +46,30 @@ async function getFrontendBundle(): Promise<string> {
   return cachedBundle;
 }
 
-// Global CORS injection helper
-function withCors(res: Response): Response {
-  const headers = new Headers(res.headers);
-  headers.set("Access-Control-Allow-Origin", "*");
-  headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  headers.set(
+// Global Security & CORS injection helper (OWASP Hardened)
+function withSecurityHeaders(res: Response): Response {
+  res.headers.set("Access-Control-Allow-Origin", "*");
+  res.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.headers.set(
     "Access-Control-Allow-Headers",
     "Content-Type, Authorization, X-Requested-With, User-Agent, X-Albatross-Key, x-admin-key"
   );
-  return new Response(res.body, {
-    status: res.status,
-    statusText: res.statusText,
-    headers,
-  });
+  res.headers.set(
+    "Access-Control-Expose-Headers",
+    "X-Albatross-Trace-Id, X-Albatross-Cache, X-Albatross-Cache-Score, X-Albatross-Provider, X-Albatross-Model, X-Albatross-Latency-Ms, X-Albatross-Cost-USD, X-Albatross-PII-Redacted"
+  );
+
+  res.headers.set("X-Frame-Options", "DENY");
+  res.headers.set("X-Content-Type-Options", "nosniff");
+  res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+  res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.headers.set(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' *; img-src 'self' data: https:;"
+  );
+
+  return res;
 }
 
 const server = Bun.serve({
@@ -77,6 +87,8 @@ const server = Bun.serve({
           "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
           "Access-Control-Allow-Headers":
             "Content-Type, Authorization, X-Requested-With, User-Agent, X-Albatross-Key, x-admin-key",
+          "Access-Control-Max-Age": "86400",
+          "X-Content-Type-Options": "nosniff",
         },
       });
     }
@@ -85,43 +97,62 @@ const server = Bun.serve({
     if (url.pathname === "/app.js") {
       try {
         const bundle = await getFrontendBundle();
-        return new Response(bundle, {
-          headers: {
-            "Content-Type": "application/javascript; charset=utf-8",
-            "Cache-Control": "no-cache",
-          },
-        });
+        return withSecurityHeaders(
+          new Response(bundle, {
+            headers: {
+              "Content-Type": "application/javascript; charset=utf-8",
+              "Cache-Control": "no-cache",
+            },
+          })
+        );
       } catch (err: any) {
-        return new Response(`console.error(${JSON.stringify(err.message)})`, {
-          status: 500,
-          headers: { "Content-Type": "application/javascript" },
-        });
+        return withSecurityHeaders(
+          new Response(`console.error(${JSON.stringify(err.message)})`, {
+            status: 500,
+            headers: { "Content-Type": "application/javascript" },
+          })
+        );
       }
     }
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
       try {
         const html = getIndexHtml();
-        return new Response(html, {
-          headers: { "Content-Type": "text/html; charset=utf-8" },
-        });
+        return withSecurityHeaders(
+          new Response(html, {
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          })
+        );
       } catch (e) {
-        return new Response("Index HTML not found", { status: 404 });
+        return withSecurityHeaders(new Response("Index HTML not found", { status: 404 }));
       }
     }
 
-    // 2. Health & Telemetry Ping
+    // 2. Health & Telemetry Ping (Footprinting protected)
     if (url.pathname === "/health") {
-      const memoryUsage = process.memoryUsage();
-      return withCors(
+      const adminKey = req.headers.get("x-admin-key") || "";
+      const isAdmin = safeCompare(adminKey, CONFIG.ADMIN_PASSWORD);
+
+      // Only reveal uptime, memory breakdown, and version to authenticated admin
+      if (isAdmin) {
+        const memoryUsage = process.memoryUsage();
+        return withSecurityHeaders(
+          Response.json({
+            status: "healthy",
+            uptimeSeconds: Math.floor(process.uptime()),
+            memoryMb: {
+              rss: Math.round(memoryUsage.rss / 1024 / 1024),
+              heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+            },
+            version: "1.0.0",
+          })
+        );
+      }
+
+      // Anonymous public probe (zero reconnaissance information)
+      return withSecurityHeaders(
         Response.json({
           status: "healthy",
-          uptimeSeconds: Math.floor(process.uptime()),
-          memoryMb: {
-            rss: Math.round(memoryUsage.rss / 1024 / 1024),
-            heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024),
-          },
-          version: "1.0.0",
         })
       );
     }
@@ -129,18 +160,18 @@ const server = Bun.serve({
     // 3. OpenAI-Compatible Core Endpoints
     if (url.pathname === "/v1/chat/completions" && req.method === "POST") {
       const res = await handleChatCompletions(req);
-      return withCors(res);
+      return withSecurityHeaders(res);
     }
 
     if (url.pathname === "/v1/models" && req.method === "GET") {
       const res = handleListModels();
-      return withCors(res);
+      return withSecurityHeaders(res);
     }
 
     if (url.pathname === "/v1/embeddings" && req.method === "POST") {
       const auth = authenticateKey(req);
       if (!auth.authorized) {
-        return withCors(
+        return withSecurityHeaders(
           new Response(
             JSON.stringify({ error: { message: auth.error, type: "authentication_error" } }),
             { status: auth.statusCode || 401, headers: { "Content-Type": "application/json" } }
@@ -158,7 +189,7 @@ const server = Bun.serve({
           index: idx,
         }));
 
-        return withCors(
+        return withSecurityHeaders(
           Response.json({
             object: "list",
             data,
@@ -167,17 +198,17 @@ const server = Bun.serve({
           })
         );
       } catch (err: any) {
-        return withCors(Response.json({ error: { message: err.message } }, { status: 400 }));
+        return withSecurityHeaders(Response.json({ error: { message: err.message } }, { status: 400 }));
       }
     }
 
     // 4. Console Management API
     if (url.pathname.startsWith("/api/")) {
       const res = await handleConsoleApi(req, url.pathname);
-      return withCors(res);
+      return withSecurityHeaders(res);
     }
 
-    return withCors(
+    return withSecurityHeaders(
       new Response(JSON.stringify({ error: "Endpoint not found" }), {
         status: 404,
         headers: { "Content-Type": "application/json" },
