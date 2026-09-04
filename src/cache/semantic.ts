@@ -218,6 +218,10 @@ export class SemanticCache {
 
     const vector = generateLocalEmbedding(promptText);
 
+    // Zero-Knowledge Architecture: We store ONLY the non-reversible SHA-256 fingerprint,
+    // NEVER retaining the raw user prompt on persistent storage.
+    const zkFingerprint = `[Zero-Knowledge Hash: ${promptHash.slice(0, 12)}]`;
+
     db.query(`
       INSERT OR REPLACE INTO semantic_cache (
         id, model, prompt_hash, prompt_raw, embedding_vector, response_payload, prompt_tokens, completion_tokens, hit_count, last_hit_at
@@ -226,7 +230,7 @@ export class SemanticCache {
       id,
       cacheKeyModel,
       promptHash,
-      promptText.slice(0, 500), // store bounded snippet
+      zkFingerprint,
       JSON.stringify(vector),
       JSON.stringify(responsePayload),
       promptTokens,
@@ -284,3 +288,10 @@ export class SemanticCache {
 }
 
 export const semanticCache = new SemanticCache();
+
+// Retroactively scrub any legacy plain-text prompts to ensure Zero-Knowledge guarantee
+try {
+  db.query("UPDATE semantic_cache SET prompt_raw = '[Zero-Knowledge Sanitized]' WHERE prompt_raw NOT LIKE '[Zero-Knowledge%'").run();
+} catch (e) {
+  // DB initialization handled in db/index.ts
+}

@@ -205,3 +205,98 @@ describe("5. Console API & Reconnaissance Protections (Audit Points 1-4)", () =>
   });
 });
 
+describe("6. Zero-Knowledge Architecture & Session Cookie Security (Pass 3)", () => {
+  test("Never persists raw prompt text to SQLite (Zero-Knowledge Prompt Storage)", async () => {
+    const { db } = await import("../src/db");
+    const testPrompt = "Rahasia negara: proyek satelit X-999";
+    const cacheId = await semanticCache.store("sec-model", testPrompt, { choices: [] }, 10, 10);
+
+    const row = db.query("SELECT prompt_raw, prompt_hash FROM semantic_cache WHERE id = ?").get(cacheId) as any;
+    expect(row).toBeDefined();
+    expect(row.prompt_raw).not.toContain(testPrompt);
+    expect(row.prompt_raw).toContain("[Zero-Knowledge Hash:");
+    expect(row.prompt_hash).toBeDefined();
+  });
+
+  test("Issues HttpOnly Secure SameSite=Strict cookie upon successful admin verification", async () => {
+    const { handleConsoleApi } = await import("../src/api/console");
+    const { CONFIG } = await import("../src/config");
+
+    const req = new Request("http://localhost:8788/api/admin/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: CONFIG.ADMIN_PASSWORD }),
+    });
+
+    const res = await handleConsoleApi(req, "/api/admin/verify");
+    expect(res.status).toBe(200);
+
+    const setCookie = res.headers.get("Set-Cookie");
+    expect(setCookie).toBeDefined();
+    expect(setCookie).toContain("albatross_session=adm_sess_");
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Strict");
+
+    // Extract cookie token
+    const tokenMatch = setCookie!.match(/albatross_session=([^;]+)/);
+    const sessionToken = tokenMatch ? tokenMatch[1] : "";
+    expect(sessionToken.length).toBeGreaterThan(10);
+
+    // Test session verification via Cookie header on gated /api/keys
+    const authReq = new Request("http://localhost:8788/api/keys", {
+      method: "GET",
+      headers: { Cookie: `albatross_session=${sessionToken}` },
+    });
+    const authRes = await handleConsoleApi(authReq, "/api/keys");
+    expect(authRes.status).toBe(200);
+
+    // Test GET /api/admin/session endpoint
+    const sessionCheckReq = new Request("http://localhost:8788/api/admin/session", {
+      method: "GET",
+      headers: { Cookie: `albatross_session=${sessionToken}` },
+    });
+    const sessionCheckRes = await handleConsoleApi(sessionCheckReq, "/api/admin/session");
+    expect(sessionCheckRes.status).toBe(200);
+    const sessionData = await sessionCheckRes.json();
+    expect(sessionData.authenticated).toBe(true);
+
+    // Test POST /api/admin/logout
+    const logoutReq = new Request("http://localhost:8788/api/admin/logout", {
+      method: "POST",
+      headers: { Cookie: `albatross_session=${sessionToken}` },
+    });
+    const logoutRes = await handleConsoleApi(logoutReq, "/api/admin/logout");
+    expect(logoutRes.status).toBe(200);
+    const logoutCookie = logoutRes.headers.get("Set-Cookie");
+    expect(logoutCookie).toContain("Max-Age=0");
+
+    // After logout, session is revoked
+    const postLogoutReq = new Request("http://localhost:8788/api/keys", {
+      method: "GET",
+      headers: { Cookie: `albatross_session=${sessionToken}` },
+    });
+    const postLogoutRes = await handleConsoleApi(postLogoutReq, "/api/keys");
+    expect(postLogoutRes.status).toBe(403);
+  });
+
+  test("Eliminates pacing oracle in admin authentication failure messages", async () => {
+    const { handleConsoleApi } = await import("../src/api/console");
+
+    const req = new Request("http://localhost:8788/api/admin/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "completely-wrong-password" }),
+    });
+
+    const res = await handleConsoleApi(req, "/api/admin/verify");
+    expect(res.status).toBe(401);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+    expect(data.error).toBe("Invalid administrator credentials.");
+    // Crucial: Must NOT contain attempt counter or remaining guesses
+    expect(data.error).not.toContain("attempts remaining");
+    expect(data.error).not.toContain("remaining");
+  });
+});
+
+

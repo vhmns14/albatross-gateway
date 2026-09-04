@@ -9,7 +9,17 @@ import { semanticCache } from "../cache/semantic";
 import { db } from "../db";
 import { sanitizeInput } from "../guardrails/pii";
 import { CONFIG } from "../config";
-import { safeCompare, getClientIp, checkRateLimit } from "../middleware/auth";
+import {
+  safeCompare,
+  getClientIp,
+  checkRateLimit,
+  verifyAdminSession,
+  createAdminSession,
+  revokeAdminSession,
+  createSessionCookie,
+  clearSessionCookie,
+  parseCookies,
+} from "../middleware/auth";
 import { handleChatCompletions } from "../proxy/handler";
 
 // In-memory rate limiting and lockout map for admin authentication attempts
@@ -28,25 +38,49 @@ setInterval(() => {
 }, 300_000);
 
 export function verifyAdmin(req: Request): boolean {
-  const adminKey = req.headers.get("x-admin-key") || "";
-  return safeCompare(adminKey, CONFIG.ADMIN_PASSWORD);
+  return verifyAdminSession(req);
 }
 
 export async function handleConsoleApi(req: Request, path: string): Promise<Response> {
   const method = req.method;
 
-  // 0. Admin Verification Endpoint with Brute-Force Lockout Protection & Progressive Throttling
+  // 0a. Admin Session Check
+  if (path === "/api/admin/session" && method === "GET") {
+    const isAdmin = verifyAdmin(req);
+    return Response.json({ authenticated: isAdmin });
+  }
+
+  // 0b. Admin Logout
+  if (path === "/api/admin/logout" && method === "POST") {
+    const cookieHeader = req.headers.get("cookie");
+    if (cookieHeader) {
+      const cookies = parseCookies(cookieHeader);
+      const sessionToken = cookies["albatross_session"];
+      if (sessionToken) {
+        revokeAdminSession(sessionToken);
+      }
+    }
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Set-Cookie": clearSessionCookie(),
+      },
+    });
+  }
+
+  // 0c. Admin Verification Endpoint with Brute-Force Lockout Protection & Progressive Throttling
+  // Pacing oracle eliminated: generic failure responses prevent leaking attempt counters & countdowns.
   if (path === "/api/admin/verify" && method === "POST") {
     const clientIp = getClientIp(req);
     const now = Date.now();
     const lockout = adminLockouts.get(clientIp);
 
-    // Check IP-based lockout
+    // Check IP-based lockout (no timing countdown leak)
     if (lockout && lockout.lockedUntil > now) {
-      const waitSecs = Math.ceil((lockout.lockedUntil - now) / 1000);
       return Response.json(
-        { success: false, error: `Too many failed login attempts. Locked out for ${waitSecs}s.` },
-        { status: 429, headers: { "Retry-After": waitSecs.toString() } }
+        { success: false, error: "Authentication failed. Rate limit exceeded." },
+        { status: 429, headers: { "Retry-After": "300" } }
       );
     }
 
@@ -54,7 +88,7 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
     const recentGlobalFailures = globalFailures.filter((t) => now - t < 60_000);
     if (recentGlobalFailures.length >= 15) {
       return Response.json(
-        { success: false, error: "Global rate limit reached for admin authentication. Please wait 1 minute." },
+        { success: false, error: "Authentication failed. Rate limit exceeded." },
         { status: 429, headers: { "Retry-After": "60" } }
       );
     }
@@ -64,7 +98,16 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
 
     if (safeCompare(password, CONFIG.ADMIN_PASSWORD)) {
       adminLockouts.delete(clientIp);
-      return Response.json({ success: true, isAdmin: true });
+      const sessionToken = createAdminSession(clientIp);
+      const cookie = createSessionCookie(sessionToken, req);
+
+      return new Response(JSON.stringify({ success: true, isAdmin: true }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Set-Cookie": cookie,
+        },
+      });
     }
 
     // Record failure
@@ -78,7 +121,7 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
     if (attempts >= 5) {
       adminLockouts.set(clientIp, { failedAttempts: attempts, lockedUntil: now + 5 * 60_000 });
       return Response.json(
-        { success: false, error: "Too many failed attempts. Account locked out for 5 minutes." },
+        { success: false, error: "Authentication failed. Rate limit exceeded." },
         { status: 429, headers: { "Retry-After": "300" } }
       );
     } else {
@@ -86,7 +129,7 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
     }
 
     return Response.json(
-      { success: false, error: `Invalid admin password. (${5 - attempts} attempts remaining before lockout)` },
+      { success: false, error: "Invalid administrator credentials." },
       { status: 401 }
     );
   }
@@ -128,11 +171,11 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
     return Response.json({ traces });
   }
 
-  // 3. Trace Details (Strictly Admin-Only to prevent inspecting client IPs, tokens, and payloads)
+  // 3. Trace Details (Strictly Admin-Only to prevent inspecting client IPs, tokens, and telemetry breakdowns)
   if (path.startsWith("/api/traces/") && method === "GET") {
     if (!verifyAdmin(req)) {
       return Response.json(
-        { error: "Forbidden: Deep trace inspection and audit payloads are restricted to administrators." },
+        { error: "Forbidden: Deep trace inspection is restricted to administrators." },
         { status: 403 }
       );
     }

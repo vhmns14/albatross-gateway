@@ -6,7 +6,7 @@
 import { handleChatCompletions, handleListModels } from "./proxy/handler";
 import { handleConsoleApi } from "./api/console";
 import { generateLocalEmbedding } from "./cache/semantic";
-import { authenticateKey, safeCompare } from "./middleware/auth";
+import { authenticateKey, verifyAdminSession } from "./middleware/auth";
 import { CONFIG } from "./config";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -17,12 +17,20 @@ const PORT = CONFIG.PORT;
 let cachedBundle: string | null = null;
 let lastBuildTime = 0;
 let cachedIndexHtml: string | null = null;
+let cachedTailwindJs: string | null = null;
 
 function getIndexHtml(): string {
   if (!cachedIndexHtml || CONFIG.ENV === "development") {
     cachedIndexHtml = readFileSync(join(process.cwd(), "src/frontend/index.html"), "utf-8");
   }
   return cachedIndexHtml;
+}
+
+function getTailwindJs(): string {
+  if (!cachedTailwindJs || CONFIG.ENV === "development") {
+    cachedTailwindJs = readFileSync(join(process.cwd(), "src/frontend/tailwind.js"), "utf-8");
+  }
+  return cachedTailwindJs;
 }
 
 async function getFrontendBundle(): Promise<string> {
@@ -66,7 +74,7 @@ function withSecurityHeaders(res: Response): Response {
   res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   res.headers.set(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' *; img-src 'self' data: https:;"
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:;"
   );
 
   return res;
@@ -94,6 +102,22 @@ const server = Bun.serve({
     }
 
     // 1. Static Frontend Assets
+    if (url.pathname === "/tailwind.js") {
+      try {
+        const tw = getTailwindJs();
+        return withSecurityHeaders(
+          new Response(tw, {
+            headers: {
+              "Content-Type": "application/javascript; charset=utf-8",
+              "Cache-Control": "public, max-age=86400",
+            },
+          })
+        );
+      } catch (e) {
+        return withSecurityHeaders(new Response("Tailwind script not found", { status: 404 }));
+      }
+    }
+
     if (url.pathname === "/app.js") {
       try {
         const bundle = await getFrontendBundle();
@@ -130,8 +154,7 @@ const server = Bun.serve({
 
     // 2. Health & Telemetry Ping (Footprinting protected)
     if (url.pathname === "/health") {
-      const adminKey = req.headers.get("x-admin-key") || "";
-      const isAdmin = safeCompare(adminKey, CONFIG.ADMIN_PASSWORD);
+      const isAdmin = verifyAdminSession(req);
 
       // Only reveal uptime, memory breakdown, and version to authenticated admin
       if (isAdmin) {

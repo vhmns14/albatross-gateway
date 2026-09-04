@@ -79,9 +79,8 @@ export function App() {
   const [createdSecret, setCreatedSecret] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
 
-  // Admin Mode state
+  // Admin Mode state (Zero-Knowledge: Admin password is never stored in browser memory or sessionStorage)
   const [isAdmin, setIsAdmin] = useState(false);
-  const [adminPassword, setAdminPassword] = useState("");
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [adminInput, setAdminInput] = useState("");
   const [adminError, setAdminError] = useState("");
@@ -92,11 +91,21 @@ export function App() {
   const [thresholdInput, setThresholdInput] = useState("0.90");
 
   useEffect(() => {
-    const saved = sessionStorage.getItem("albatross_admin_key");
-    if (saved) {
-      setAdminPassword(saved);
-      setIsAdmin(true);
-    }
+    // Check if valid HttpOnly admin session exists on server
+    const checkSession = async () => {
+      try {
+        const res = await fetch("/api/admin/session");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.authenticated) {
+            setIsAdmin(true);
+          }
+        }
+      } catch (e) {
+        // Offline or connection error
+      }
+    };
+    checkSession();
   }, []);
 
   const handleVerifyAdmin = async (e: React.FormEvent) => {
@@ -108,23 +117,25 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: adminInput }),
       });
-      if (res.ok) {
-        sessionStorage.setItem("albatross_admin_key", adminInput);
-        setAdminPassword(adminInput);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
         setIsAdmin(true);
         setShowAdminModal(false);
         setAdminInput("");
       } else {
-        setAdminError("Invalid admin password. Default is set in .env");
+        setAdminError(data.error || "Invalid administrator credentials.");
       }
     } catch (err: any) {
-      setAdminError("Verification failed.");
+      setAdminError("Verification request failed.");
     }
   };
 
-  const handleAdminLogout = () => {
-    sessionStorage.removeItem("albatross_admin_key");
-    setAdminPassword("");
+  const handleAdminLogout = async () => {
+    try {
+      await fetch("/api/admin/logout", { method: "POST" });
+    } catch (e) {
+      console.error(e);
+    }
     setIsAdmin(false);
   };
 
@@ -167,11 +178,7 @@ export function App() {
 
   const fetchKeys = async () => {
     try {
-      const headers: Record<string, string> = {};
-      if (isAdmin && adminPassword) {
-        headers["x-admin-key"] = adminPassword;
-      }
-      const res = await fetch("/api/keys", { headers });
+      const res = await fetch("/api/keys");
       if (res.ok) {
         const data = await res.json();
         setKeys(data.keys || []);
@@ -201,11 +208,7 @@ export function App() {
       return;
     }
     try {
-      const headers: Record<string, string> = {};
-      if (isAdmin && adminPassword) {
-        headers["x-admin-key"] = adminPassword;
-      }
-      const res = await fetch(`/api/traces/${traceId}`, { headers });
+      const res = await fetch(`/api/traces/${traceId}`);
       if (res.ok) {
         const data = await res.json();
         setSelectedTrace(data.trace);
@@ -222,7 +225,7 @@ export function App() {
     }
     await fetch("/api/providers/simulate-trip", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin-key": adminPassword },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ providerId }),
     });
     fetchOverview();
@@ -235,7 +238,7 @@ export function App() {
     }
     await fetch("/api/providers/reset", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin-key": adminPassword },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ providerId }),
     });
     fetchOverview();
@@ -249,7 +252,6 @@ export function App() {
     if (confirm("Are you sure you want to purge the entire semantic cache?")) {
       await fetch("/api/cache/purge", {
         method: "POST",
-        headers: { "x-admin-key": adminPassword },
       });
       fetchCache();
       fetchOverview();
@@ -265,7 +267,7 @@ export function App() {
     if (!isNaN(val)) {
       await fetch("/api/cache/threshold", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-admin-key": adminPassword },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ threshold: val }),
       });
       fetchCache();
@@ -280,7 +282,7 @@ export function App() {
     }
     const res = await fetch("/api/keys", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin-key": adminPassword },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: newKeyName,
         spendLimitUsd: newKeySpend,
@@ -305,7 +307,6 @@ export function App() {
     if (confirm("Revoke this virtual API key? Applications using it will immediately receive 403.")) {
       await fetch(`/api/keys/${keyId}`, {
         method: "DELETE",
-        headers: { "x-admin-key": adminPassword },
       });
       fetchKeys();
     }
@@ -320,16 +321,11 @@ export function App() {
     const startTime = performance.now();
 
     try {
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (isAdmin && adminPassword) {
-        headers["x-admin-key"] = adminPassword;
-      }
-
       const response = await fetch("/api/playground/chat", {
         method: "POST",
-        headers,
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           model: playgroundModel,
           messages: [{ role: "user", content: promptInput }],

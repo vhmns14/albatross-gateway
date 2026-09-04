@@ -21,6 +21,15 @@ const rateLimitBuckets = new Map<string, number[]>();
 // In-memory IP rate limiting counters for public demo protection (IP -> timestamps)
 const ipRateLimitBuckets = new Map<string, number[]>();
 
+// In-memory active administrator sessions (token -> session)
+export interface AdminSession {
+  token: string;
+  createdAt: number;
+  expiresAt: number;
+  clientIp: string;
+}
+const adminSessions = new Map<string, AdminSession>();
+
 // Constant-time string comparison to prevent timing attacks
 export function safeCompare(a: string, b: string): boolean {
   if (!a || !b) return false;
@@ -29,7 +38,93 @@ export function safeCompare(a: string, b: string): boolean {
   return crypto.timingSafeEqual(hashA, hashB);
 }
 
-// Memory leak guard: sweep expired timestamps every 2 minutes
+// Admin Session Management
+export function createAdminSession(clientIp: string): string {
+  const token = `adm_sess_${crypto.randomUUID().replace(/-/g, "")}_${Date.now().toString(36)}`;
+  const now = Date.now();
+  const maxAgeMs = 2 * 60 * 60 * 1000; // 2 hours validity
+  adminSessions.set(token, {
+    token,
+    createdAt: now,
+    expiresAt: now + maxAgeMs,
+    clientIp,
+  });
+  return token;
+}
+
+export function revokeAdminSession(token: string): boolean {
+  return adminSessions.delete(token);
+}
+
+export function isValidAdminSession(token: string): boolean {
+  if (!token) return false;
+  const session = adminSessions.get(token);
+  if (!session) return false;
+  if (Date.now() > session.expiresAt) {
+    adminSessions.delete(token);
+    return false;
+  }
+  return true;
+}
+
+export function parseCookies(cookieHeader: string | null): Record<string, string> {
+  if (!cookieHeader) return {};
+  const cookies: Record<string, string> = {};
+  const pairs = cookieHeader.split(";");
+  for (const pair of pairs) {
+    const [name, ...rest] = pair.trim().split("=");
+    if (name && rest.length > 0) {
+      cookies[name] = decodeURIComponent(rest.join("="));
+    }
+  }
+  return cookies;
+}
+
+export function createSessionCookie(token: string, req?: Request): string {
+  const isSecure =
+    CONFIG.ENV === "production" ||
+    req?.headers.get("x-forwarded-proto") === "https" ||
+    req?.headers.get("cf-visitor")?.includes('"scheme":"https"') ||
+    req?.url.startsWith("https:");
+
+  const parts = [
+    `albatross_session=${token}`,
+    "HttpOnly",
+    "SameSite=Strict",
+    "Path=/",
+    "Max-Age=7200",
+  ];
+  if (isSecure) {
+    parts.push("Secure");
+  }
+  return parts.join("; ");
+}
+
+export function clearSessionCookie(): string {
+  return "albatross_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+}
+
+export function verifyAdminSession(req: Request): boolean {
+  // 1. Check HttpOnly cookie first (primary browser vector)
+  const cookieHeader = req.headers.get("cookie");
+  if (cookieHeader) {
+    const cookies = parseCookies(cookieHeader);
+    const sessionToken = cookies["albatross_session"];
+    if (sessionToken && isValidAdminSession(sessionToken)) {
+      return true;
+    }
+  }
+
+  // 2. Fallback to x-admin-key header (curl, CLI, automated tests)
+  const adminKey = req.headers.get("x-admin-key") || "";
+  if (adminKey && safeCompare(adminKey, CONFIG.ADMIN_PASSWORD)) {
+    return true;
+  }
+
+  return false;
+}
+
+// Memory leak guard: sweep expired timestamps and stale sessions every 2 minutes
 setInterval(() => {
   const now = Date.now();
   for (const [ip, timestamps] of ipRateLimitBuckets.entries()) {
@@ -46,6 +141,11 @@ setInterval(() => {
       rateLimitBuckets.delete(keyId);
     } else {
       rateLimitBuckets.set(keyId, valid);
+    }
+  }
+  for (const [token, sess] of adminSessions.entries()) {
+    if (now > sess.expiresAt) {
+      adminSessions.delete(token);
     }
   }
 }, 120_000);
@@ -86,8 +186,7 @@ export function authenticateKey(req: Request): {
   statusCode?: number;
 } {
   const clientIp = getClientIp(req);
-  const adminKey = req.headers.get("x-admin-key") || "";
-  const isAdmin = safeCompare(adminKey, CONFIG.ADMIN_PASSWORD);
+  const isAdmin = verifyAdminSession(req);
 
   // 1. IP-Based Abuse Protection (Enforced for non-admins)
   const rateLimitCheck = checkRateLimit(clientIp, isAdmin);
