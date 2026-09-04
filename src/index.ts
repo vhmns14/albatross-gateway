@@ -54,13 +54,42 @@ async function getFrontendBundle(): Promise<string> {
   return cachedBundle;
 }
 
+// Check if incoming origin matches allowed domain / same-host
+export function isAllowedOrigin(origin: string | null, host: string): boolean {
+  if (!origin) return false;
+  try {
+    const { hostname } = new URL(origin);
+    const hostName = host.split(":")[0];
+    return (
+      hostname === hostName ||
+      hostname.endsWith(".style.dev") ||
+      hostname === "style.dev" ||
+      hostname === "localhost" ||
+      hostname === "127.0.0.1"
+    );
+  } catch {
+    return false;
+  }
+}
+
 // Global Security & CORS injection helper (OWASP Hardened)
-function withSecurityHeaders(res: Response): Response {
-  res.headers.set("Access-Control-Allow-Origin", "*");
+export function withSecurityHeaders(res: Response, req?: Request): Response {
+  const origin = req?.headers.get("origin");
+  const host = req?.headers.get("host") || "albatross-gateway.style.dev";
+
+  if (origin && isAllowedOrigin(origin, host)) {
+    res.headers.set("Access-Control-Allow-Origin", origin);
+    res.headers.set("Vary", "Origin");
+  } else if (!origin) {
+    res.headers.set("Access-Control-Allow-Origin", `https://${host.split(":")[0]}`);
+  }
+  // Untrusted cross-origin requests do NOT receive an allowed origin header,
+  // restoring strict cross-origin read protection in all browsers.
+
   res.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.headers.set(
     "Access-Control-Allow-Headers",
-    "Content-Type, Authorization, X-Requested-With, User-Agent, X-Albatross-Key, x-admin-key"
+    "Content-Type, Authorization, X-Requested-With, User-Agent, X-Albatross-Key"
   );
   res.headers.set(
     "Access-Control-Expose-Headers",
@@ -80,7 +109,10 @@ function withSecurityHeaders(res: Response): Response {
   return res;
 }
 
-const server = Bun.serve({
+let server: any = null;
+
+if (import.meta.main) {
+  server = Bun.serve({
   port: PORT,
   hostname: CONFIG.HOST,
   async fetch(req) {
@@ -88,13 +120,17 @@ const server = Bun.serve({
 
     // Global CORS Preflight
     if (req.method === "OPTIONS") {
+      const origin = req.headers.get("origin");
+      const host = req.headers.get("host") || "albatross-gateway.style.dev";
+      const allowed = isAllowedOrigin(origin, host);
+
       return new Response(null, {
-        status: 204,
+        status: allowed ? 204 : 403,
         headers: {
-          "Access-Control-Allow-Origin": "*",
+          ...(allowed && origin ? { "Access-Control-Allow-Origin": origin, "Vary": "Origin" } : {}),
           "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
           "Access-Control-Allow-Headers":
-            "Content-Type, Authorization, X-Requested-With, User-Agent, X-Albatross-Key, x-admin-key",
+            "Content-Type, Authorization, X-Requested-With, User-Agent, X-Albatross-Key",
           "Access-Control-Max-Age": "86400",
           "X-Content-Type-Options": "nosniff",
         },
@@ -111,10 +147,11 @@ const server = Bun.serve({
               "Content-Type": "application/javascript; charset=utf-8",
               "Cache-Control": "public, max-age=86400",
             },
-          })
+          }),
+          req
         );
       } catch (e) {
-        return withSecurityHeaders(new Response("Tailwind script not found", { status: 404 }));
+        return withSecurityHeaders(new Response("Tailwind script not found", { status: 404 }), req);
       }
     }
 
@@ -127,14 +164,16 @@ const server = Bun.serve({
               "Content-Type": "application/javascript; charset=utf-8",
               "Cache-Control": "no-cache",
             },
-          })
+          }),
+          req
         );
       } catch (err: any) {
         return withSecurityHeaders(
           new Response(`console.error(${JSON.stringify(err.message)})`, {
             status: 500,
             headers: { "Content-Type": "application/javascript" },
-          })
+          }),
+          req
         );
       }
     }
@@ -145,10 +184,11 @@ const server = Bun.serve({
         return withSecurityHeaders(
           new Response(html, {
             headers: { "Content-Type": "text/html; charset=utf-8" },
-          })
+          }),
+          req
         );
       } catch (e) {
-        return withSecurityHeaders(new Response("Index HTML not found", { status: 404 }));
+        return withSecurityHeaders(new Response("Index HTML not found", { status: 404 }), req);
       }
     }
 
@@ -168,7 +208,8 @@ const server = Bun.serve({
               heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024),
             },
             version: "1.0.0",
-          })
+          }),
+          req
         );
       }
 
@@ -176,19 +217,20 @@ const server = Bun.serve({
       return withSecurityHeaders(
         Response.json({
           status: "healthy",
-        })
+        }),
+        req
       );
     }
 
     // 3. OpenAI-Compatible Core Endpoints
     if (url.pathname === "/v1/chat/completions" && req.method === "POST") {
       const res = await handleChatCompletions(req);
-      return withSecurityHeaders(res);
+      return withSecurityHeaders(res, req);
     }
 
     if (url.pathname === "/v1/models" && req.method === "GET") {
       const res = handleListModels();
-      return withSecurityHeaders(res);
+      return withSecurityHeaders(res, req);
     }
 
     if (url.pathname === "/v1/embeddings" && req.method === "POST") {
@@ -198,7 +240,8 @@ const server = Bun.serve({
           new Response(
             JSON.stringify({ error: { message: auth.error, type: "authentication_error" } }),
             { status: auth.statusCode || 401, headers: { "Content-Type": "application/json" } }
-          )
+          ),
+          req
         );
       }
 
@@ -218,29 +261,31 @@ const server = Bun.serve({
             data,
             model: body.model || "albatross-embed-local",
             usage: { prompt_tokens: texts.join(" ").length / 4, total_tokens: texts.join(" ").length / 4 },
-          })
+          }),
+          req
         );
       } catch (err: any) {
-        return withSecurityHeaders(Response.json({ error: { message: err.message } }, { status: 400 }));
+        return withSecurityHeaders(Response.json({ error: { message: err.message } }, { status: 400 }), req);
       }
     }
 
     // 4. Console Management API
     if (url.pathname.startsWith("/api/")) {
       const res = await handleConsoleApi(req, url.pathname);
-      return withSecurityHeaders(res);
+      return withSecurityHeaders(res, req);
     }
 
     return withSecurityHeaders(
       new Response(JSON.stringify({ error: "Endpoint not found" }), {
         status: 404,
         headers: { "Content-Type": "application/json" },
-      })
+      }),
+      req
     );
   },
 });
 
-console.log(`
+  console.log(`
 🪶  Albatross AI Gateway Online
 ──────────────────────────────────────────────────────────
  • Console UI:    http://localhost:${PORT}/
@@ -250,3 +295,4 @@ console.log(`
  • Memory Used:   ~${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB RAM
 ──────────────────────────────────────────────────────────
 `);
+}

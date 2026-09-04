@@ -299,4 +299,44 @@ describe("6. Zero-Knowledge Architecture & Session Cookie Security (Pass 3)", ()
   });
 });
 
+describe("7. CORS Hardening & Cross-Origin Read Protections", () => {
+  test("Validates trusted vs untrusted origins strictly", async () => {
+    const { isAllowedOrigin } = await import("../src/index");
+    expect(isAllowedOrigin("https://albatross-gateway.style.dev", "albatross-gateway.style.dev")).toBe(true);
+    expect(isAllowedOrigin("https://sub.style.dev", "albatross-gateway.style.dev")).toBe(true);
+    expect(isAllowedOrigin("http://localhost:8788", "localhost:8788")).toBe(true);
+    expect(isAllowedOrigin("http://127.0.0.1:8788", "127.0.0.1:8788")).toBe(true);
+    expect(isAllowedOrigin("https://evil-attacker.com", "albatross-gateway.style.dev")).toBe(false);
+    expect(isAllowedOrigin("https://albatross-gateway.style.dev.attacker.com", "albatross-gateway.style.dev")).toBe(false);
+  });
+
+  test("Scrubs x-admin-key from Access-Control-Allow-Headers", async () => {
+    const { withSecurityHeaders } = await import("../src/index");
+    const res = withSecurityHeaders(new Response("ok"));
+    const allowedHeaders = res.headers.get("Access-Control-Allow-Headers") || "";
+    expect(allowedHeaders).not.toContain("x-admin-key");
+    expect(allowedHeaders).toContain("Authorization");
+    expect(allowedHeaders).toContain("Content-Type");
+  });
+
+  test("Blocks cross-origin read by omitting ACAO for untrusted origins", async () => {
+    const { withSecurityHeaders } = await import("../src/index");
+    const untrustedReq = new Request("https://albatross-gateway.style.dev/api/overview", {
+      headers: { Origin: "https://evil.com", Host: "albatross-gateway.style.dev" },
+    });
+    const res = withSecurityHeaders(new Response("telemetry"), untrustedReq);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+
+  test("Allows legitimate cross-origin requests from own domain", async () => {
+    const { withSecurityHeaders } = await import("../src/index");
+    const trustedReq = new Request("https://albatross-gateway.style.dev/api/overview", {
+      headers: { Origin: "https://albatross-gateway.style.dev", Host: "albatross-gateway.style.dev" },
+    });
+    const res = withSecurityHeaders(new Response("telemetry"), trustedReq);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://albatross-gateway.style.dev");
+  });
+});
+
+
 
