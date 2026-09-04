@@ -27,7 +27,7 @@ async function getFrontendBundle(): Promise<string> {
     });
 
     if (!buildResult.success) {
-      console.error("[Aegis] Bundle build failed:", buildResult.logs);
+      console.error("[Albatross] Bundle build failed:", buildResult.logs);
       throw new Error("Failed to bundle frontend");
     }
 
@@ -122,7 +122,7 @@ const server = Bun.serve({
         return Response.json({
           object: "list",
           data,
-          model: body.model || "aegis-embed-local",
+          model: body.model || "albatross-embed-local",
           usage: { prompt_tokens: texts.join(" ").length / 4, total_tokens: texts.join(" ").length / 4 },
         });
       } catch (err: any) {
@@ -143,7 +143,7 @@ const server = Bun.serve({
 });
 
 console.log(`
-🛡️  Aegis AI Gateway Online
+🪶  Albatross AI Gateway Online
 ──────────────────────────────────────────────────────────
  • Console UI:    http://localhost:${PORT}/
  • Core Proxy:    http://localhost:${PORT}/v1/chat/completions

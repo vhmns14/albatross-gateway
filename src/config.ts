@@ -1,5 +1,5 @@
 /**
- * Aegis AI Gateway - Configuration
+ * Albatross AI Gateway - Configuration
  */
 
 export interface ProviderConfig {
@@ -20,20 +20,20 @@ export const CONFIG = {
   ENV: process.env.NODE_ENV || "development",
   
   // Semantic Cache Configuration
-  CACHE_ENABLED: process.env.AEGIS_CACHE_ENABLED !== "false",
-  SIMILARITY_THRESHOLD: Number(process.env.AEGIS_SIMILARITY_THRESHOLD) || 0.90,
-  CACHE_TTL_SECONDS: Number(process.env.AEGIS_CACHE_TTL) || 86400 * 7, // 7 days default
+  CACHE_ENABLED: process.env.ALBATROSS_CACHE_ENABLED !== "false",
+  SIMILARITY_THRESHOLD: Number(process.env.ALBATROSS_SIMILARITY_THRESHOLD) || 0.90,
+  CACHE_TTL_SECONDS: Number(process.env.ALBATROSS_CACHE_TTL) || 86400 * 7, // 7 days default
   
   // Guardrails Configuration
-  GUARDRAILS_ENABLED: process.env.AEGIS_GUARDRAILS_ENABLED !== "false",
-  BLOCK_ON_INJECTION: process.env.AEGIS_BLOCK_INJECTION === "true", // false = sanitize & warn
+  GUARDRAILS_ENABLED: process.env.ALBATROSS_GUARDRAILS_ENABLED !== "false",
+  BLOCK_ON_INJECTION: process.env.ALBATROSS_BLOCK_INJECTION === "true", // false = sanitize & warn
   
   // Circuit Breaker Settings
   MAX_CONSECUTIVE_ERRORS: 3,
   COOLDOWN_PERIOD_MS: 30_000, // 30 seconds
   UPSTREAM_TIMEOUT_MS: 15_000, // 15 seconds
   
-  // Upstream Providers (Configurable via environment variables)
+  // Upstream Providers
   PROVIDERS: [
     {
       id: "groq",

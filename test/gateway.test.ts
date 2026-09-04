@@ -56,15 +56,15 @@ describe("2. Semantic Caching Engine", () => {
   });
 
   test("Stores and retrieves cached responses accurately", async () => {
-    const prompt = "Jelaskan arsitektur Aegis Gateway";
-    const mockResponse = { choices: [{ message: { content: "Aegis is an enterprise LLM gateway" } }] };
+    const prompt = "Jelaskan arsitektur Albatross Gateway";
+    const mockResponse = { choices: [{ message: { content: "Albatross is an enterprise LLM gateway" } }] };
 
     await semanticCache.store("test-model", prompt, mockResponse, 10, 20);
     const lookup = await semanticCache.lookup("test-model", prompt);
 
     expect(lookup.hit).toBe(true);
     expect(lookup.similarity).toBeGreaterThanOrEqual(0.9);
-    expect(lookup.cachedResponse.choices[0].message.content).toBe("Aegis is an enterprise LLM gateway");
+    expect(lookup.cachedResponse.choices[0].message.content).toBe("Albatross is an enterprise LLM gateway");
   });
 });
 

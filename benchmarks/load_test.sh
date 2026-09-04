@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Aegis Gateway - Latency & Overhead Benchmark Script
+# Albatross Gateway - Latency & Overhead Benchmark Script
 
 GATEWAY_URL=${1:-"http://localhost:8788"}
-VIRTUAL_KEY=${2:-"sk-aegis-root-master-key"}
+VIRTUAL_KEY=${2:-"sk-albatross-root-master-key"}
 
 echo "=========================================================="
-echo " 🛡️  Aegis AI Gateway - Latency & Caching Benchmark"
+echo " 🪶  Albatross AI Gateway - Latency & Caching Benchmark"
 echo " Target: ${GATEWAY_URL}"
 echo "=========================================================="
 
@@ -16,7 +16,7 @@ curl -s -w "\nHTTP Status: %{http_code}\nTotal Time: %{time_total}s\n" \
   -H "Authorization: Bearer ${VIRTUAL_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "aegis-auto",
+    "model": "albatross-auto",
     "messages": [{"role": "user", "content": "Benchmark test query 1: Explain semantic caching."}],
     "stream": false
   }'
@@ -28,7 +28,7 @@ curl -s -w "\nHTTP Status: %{http_code}\nTotal Time: %{time_total}s\n" \
   -H "Authorization: Bearer ${VIRTUAL_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "aegis-auto",
+    "model": "albatross-auto",
     "messages": [{"role": "user", "content": "Benchmark test query 1: Explain semantic caching."}],
     "stream": false
   }'

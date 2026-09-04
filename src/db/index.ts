@@ -1,5 +1,5 @@
 /**
- * Aegis AI Gateway - SQLite Database Layer
+ * Albatross AI Gateway - SQLite Database Layer
  * Uses Bun:sqlite for zero-daemon, sub-millisecond local queries.
  * Database files (*.db) are strictly excluded from Git.
  */
@@ -8,7 +8,7 @@ import { Database } from "bun:sqlite";
 import { join } from "path";
 
 // DB Path inside project directory
-const DB_PATH = join(process.cwd(), "aegis.db");
+const DB_PATH = join(process.cwd(), "albatross.db");
 export const db = new Database(DB_PATH);
 
 // Enable WAL mode for high concurrency
@@ -98,7 +98,7 @@ export function initDatabase() {
   // Insert default root virtual key if none exists
   const existingKey = db.query("SELECT id FROM virtual_keys LIMIT 1").get();
   if (!existingKey) {
-    const defaultRawKey = "sk-aegis-root-master-key";
+    const defaultRawKey = "sk-albatross-root-master-key";
     const hasher = new Bun.CryptoHasher("sha256");
     hasher.update(defaultRawKey);
     const keyHash = hasher.digest("hex");
@@ -110,13 +110,13 @@ export function initDatabase() {
       "key_root_01",
       "Production Root Gateway Key",
       keyHash,
-      "sk-aegis-root",
+      "sk-albatross-root",
       500.0,
       0.0,
       1200,
       1
     );
-    console.log("[Aegis DB] Initialized default key: sk-aegis-root-master-key");
+    console.log("[Albatross DB] Initialized default key: sk-albatross-root-master-key");
   }
 }
 

@@ -63,7 +63,7 @@ export class DynamicRouter {
       try {
         // Resolve model mapping
         let targetModel = requestedModel;
-        if (!requestedModel || requestedModel === "default" || requestedModel.startsWith("aegis-")) {
+        if (!requestedModel || requestedModel === "default" || requestedModel.startsWith("albatross-")) {
           targetModel = provider.defaultModel;
         }
 
@@ -146,7 +146,7 @@ export class DynamicRouter {
       } catch (err: any) {
         const latency = Math.round(performance.now() - startTime);
         const errMsg = err.name === "AbortError" ? "Upstream Timeout (>15s)" : err.message || "Network error";
-        console.warn(`[Aegis Router] ${provider.id} failed: ${errMsg}`);
+        console.warn(`[Albatross Router] ${provider.id} failed: ${errMsg}`);
         circuitBreaker.recordFailure(provider.id, errMsg);
         lastError = `${provider.id} Error: ${errMsg}`;
       }
@@ -162,7 +162,7 @@ export class DynamicRouter {
         JSON.stringify({
           error: {
             message: `All upstream providers failed or in circuit-breaker cooldown: ${lastError}`,
-            type: "aegis_gateway_upstream_error",
+            type: "albatross_gateway_upstream_error",
             fallback_chain: fallbackChain,
           },
         }),
@@ -184,7 +184,7 @@ export class DynamicRouter {
     const messages = body.messages || [];
     const lastUserMsg = messages.filter((m: any) => m.role === "user").pop()?.content || "Hello";
     const promptTokens = Math.ceil(JSON.stringify(messages).length / 4);
-    const mockContent = `[Aegis Gateway Demo · Provider: ${provider.name}]\n\nProcessed query: "${lastUserMsg.slice(0, 80)}${lastUserMsg.length > 80 ? "..." : ""}"\n\nRouting succeeded via ${provider.id}. Streaming and PII redaction active.`;
+    const mockContent = `[Albatross Gateway Demo · Provider: ${provider.name}]\n\nProcessed query: "${lastUserMsg.slice(0, 80)}${lastUserMsg.length > 80 ? "..." : ""}"\n\nRouting succeeded via ${provider.id}. Streaming and PII redaction active.`;
     const completionTokens = Math.ceil(mockContent.length / 4);
     const costUsd =
       (promptTokens / 1000) * provider.costPer1kInputTokens +

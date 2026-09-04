@@ -1,5 +1,5 @@
 {
-  "name": "aegis-gateway",
+  "name": "albatross-gateway",
   "version": "1.0.0",
   "description": "Enterprise-Grade LLM Middleware, Routing, Semantic Caching & Observability Engine",
   "type": "module",

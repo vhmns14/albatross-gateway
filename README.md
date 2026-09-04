@@ -1,10 +1,10 @@
-# Aegis AI Gateway 🛡️
+# Albatross AI Gateway 🪶
 > **Production-Grade LLM Middleware, Intelligent Routing, Semantic Caching & Telemetry Engine**  
 > *Sub-15ms proxy overhead · In-Flight PII Redaction · Circuit Breaker Fallbacks · Anti-AI-Slop Developer Console*
 
 ---
 
-## ⚡ The Problem & Why Aegis Was Built
+## ⚡ The Problem & Why Albatross Was Built
 
 Directly connecting production web and mobile apps to 3rd-party LLM providers (OpenAI, Anthropic, Gemini, Groq) introduces severe operational hazards:
 1. **Uncontrolled Token Burn**: Duplicate or semantically identical queries re-hit upstream models repeatedly, wasting thousands of dollars.
@@ -12,7 +12,7 @@ Directly connecting production web and mobile apps to 3rd-party LLM providers (O
 3. **Data Privacy / PII Leakage**: Raw prompts containing Indonesian NIK, phone numbers, customer emails, or leaked API secrets are forwarded directly to external AI providers.
 4. **Zero Observability**: No centralized trace waterfall for latency percentiles (P50/P95/P99), cache hit efficiency, or spend attribution per team.
 
-**Aegis** is an enterprise AI Gateway sitting between client applications and upstream foundation models, transforming LLM interactions into reliable, secure, and observable infrastructure.
+**Albatross** is an enterprise AI Gateway sitting between client applications and upstream foundation models, transforming LLM interactions into reliable, secure, and observable infrastructure.
 
 ---
 
@@ -23,9 +23,9 @@ Directly connecting production web and mobile apps to 3rd-party LLM providers (O
            │ (POST /v1/chat/completions)
            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      AEGIS GATEWAY                          │
+│                    ALBATROSS GATEWAY                        │
 │                                                             │
-│  [1. Virtual Key Auth & Rate Limiter] (sk-aegis-...)        │
+│  [1. Virtual Key Auth & Rate Limiter] (sk-albatross-...)    │
 │                         │                                   │
 │  [2. In-Flight PII & Injection Guardrail]                   │
 │      └─ Masks Indonesian NIK, Phone, Email, Secrets         │
@@ -69,7 +69,7 @@ Directly connecting production web and mobile apps to 3rd-party LLM providers (O
 
 ## 📊 Telemetry Benchmarks & Footprint
 
-| Metric | Aegis AI Gateway | Standard Python / LangChain Proxy |
+| Metric | Albatross AI Gateway | Standard Python / LangChain Proxy |
 | :--- | :--- | :--- |
 | **Proxy Latency Overhead** | **$< 12\text{ms}$** | $\sim 80\text{--}250\text{ms}$ |
 | **RAM Footprint (Base)** | **$\sim 45\text{MB}$** | $\sim 550\text{MB}$ (due to PyTorch/Torchvision) |
@@ -86,7 +86,7 @@ Directly connecting production web and mobile apps to 3rd-party LLM providers (O
 ### Setup & Run
 ```bash
 # 1. Clone and navigate to directory
-cd aegis-gateway
+cd albatross-gateway
 
 # 2. Install dependencies (<10s)
 bun install
@@ -104,7 +104,7 @@ Visit the Developer Console at **`http://localhost:8788/`**.
 
 ## 🔌 Drop-In SDK Usage
 
-Aegis is 100% compatible with the official OpenAI SDK. Simply change `base_url`:
+Albatross is 100% compatible with the official OpenAI SDK. Simply change `base_url`:
 
 ### Python
 ```python
@@ -112,11 +112,11 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:8788/v1",
-    api_key="sk-aegis-root-master-key"  # Virtual key managed in Aegis Console
+    api_key="sk-albatross-root-master-key"  # Virtual key managed in Albatross Console
 )
 
 response = client.chat.completions.create(
-    model="aegis-auto",  # Automatically routes to fastest/healthiest provider
+    model="albatross-auto",  # Automatically routes to fastest/healthiest provider
     messages=[
         {"role": "user", "content": "Halo, ini NIK saya 3201234567890001, tolong bantu."}
     ],
@@ -130,10 +130,10 @@ for chunk in response:
 ### cURL
 ```bash
 curl -X POST http://localhost:8788/v1/chat/completions \
-  -H "Authorization: Bearer sk-aegis-root-master-key" \
+  -H "Authorization: Bearer sk-albatross-root-master-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "aegis-auto",
+    "model": "albatross-auto",
     "messages": [
       {"role": "user", "content": "Halo, nomor saya 081234567890."}
     ],
@@ -145,7 +145,7 @@ curl -X POST http://localhost:8788/v1/chat/completions \
 
 ## ☁️ Deployment on AWS (1 vCPU / 1 GB RAM)
 
-Aegis was specifically engineered to run comfortably on a **\$3.50/mo AWS Lightsail** or **EC2 t4g.micro** instance:
+Albatross was specifically engineered to run comfortably on a **\$3.50/mo AWS Lightsail** or **EC2 t4g.micro** instance:
 
 ### Step 1: Create a 2GB Swap File (Crucial for 1GB RAM stability)
 ```bash

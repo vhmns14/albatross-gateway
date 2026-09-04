@@ -65,7 +65,7 @@ export function App() {
   const [promptInput, setPromptInput] = useState(
     "Halo, NIK saya 3201234567890001 dan no HP 081234567890. Bisakah kamu jelaskan apa itu AI Gateway?"
   );
-  const [playgroundModel, setPlaygroundModel] = useState("aegis-auto");
+  const [playgroundModel, setPlaygroundModel] = useState("albatross-auto");
   const [isStreaming, setIsStreaming] = useState(true);
   const [playgroundOutput, setPlaygroundOutput] = useState("");
   const [playgroundMetadata, setPlaygroundMetadata] = useState<any | null>(null);
@@ -233,7 +233,7 @@ export function App() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: "Bearer sk-aegis-root-master-key",
+          Authorization: "Bearer sk-albatross-root-master-key",
         },
         body: JSON.stringify({
           model: playgroundModel,
@@ -242,13 +242,13 @@ export function App() {
         }),
       });
 
-      const traceId = response.headers.get("X-Aegis-Trace-Id");
-      const cacheStatus = response.headers.get("X-Aegis-Cache") || "MISS";
-      const cacheScore = response.headers.get("X-Aegis-Cache-Score");
-      const provider = response.headers.get("X-Aegis-Provider") || "upstream";
-      const latency = response.headers.get("X-Aegis-Latency-Ms");
-      const cost = response.headers.get("X-Aegis-Cost-USD") || "0.0000";
-      const piiRedacted = response.headers.get("X-Aegis-PII-Redacted") || "0";
+      const traceId = response.headers.get("X-Albatross-Trace-Id");
+      const cacheStatus = response.headers.get("X-Albatross-Cache") || "MISS";
+      const cacheScore = response.headers.get("X-Albatross-Cache-Score");
+      const provider = response.headers.get("X-Albatross-Provider") || "upstream";
+      const latency = response.headers.get("X-Albatross-Latency-Ms");
+      const cost = response.headers.get("X-Albatross-Cost-USD") || "0.0000";
+      const piiRedacted = response.headers.get("X-Albatross-PII-Redacted") || "0";
 
       setPlaygroundMetadata({
         traceId,
@@ -314,7 +314,7 @@ export function App() {
             </div>
             <div>
               <span className="font-semibold text-sm tracking-tight text-white flex items-center gap-2">
-                AEGIS <span className="text-zinc-500 font-normal">/ AI Gateway</span>
+                ALBATROSS <span className="text-zinc-500 font-normal">/ AI Gateway</span>
               </span>
             </div>
           </div>
@@ -823,7 +823,7 @@ export function App() {
                 Dynamic Routing Policy & Fault Tolerance DAG
               </h2>
               <p className="text-xs text-zinc-400">
-                Aegis transparently reroutes failed upstream LLM queries without returning 5xx to clients.
+                Albatross transparently reroutes failed upstream LLM queries without returning 5xx to clients.
               </p>
             </div>
 
@@ -839,7 +839,7 @@ export function App() {
                 <div className="bg-infra-850 border border-infra-700 p-3 rounded w-full md:w-44 text-center">
                   <span className="text-zinc-400 text-[10px] block">CLIENT INGRESS</span>
                   <span className="text-white font-bold">/v1/chat/completions</span>
-                  <span className="text-zinc-500 text-[10px] block mt-1">Bearer sk-aegis-...</span>
+                  <span className="text-zinc-500 text-[10px] block mt-1">Bearer sk-albatross-...</span>
                 </div>
 
                 <ArrowRight className="w-4 h-4 text-zinc-600 hidden md:block" />
@@ -1106,11 +1106,11 @@ export function App() {
 
 client = OpenAI(
     base_url="http://localhost:8788/v1",
-    api_key="sk-aegis-root-master-key"
+    api_key="sk-albatross-root-master-key"
 )
 
 response = client.chat.completions.create(
-    model="aegis-auto",
+    model="albatross-auto",
     messages=[{"role": "user", "content": "Halo!"}]
 )`}
                   </pre>
@@ -1120,10 +1120,10 @@ response = client.chat.completions.create(
                   <span className="text-zinc-400 text-[11px]">cURL Terminal</span>
                   <pre className="p-3 rounded bg-infra-950 border border-infra-800 text-zinc-300 text-[11px] overflow-x-auto">
 {`curl -X POST http://localhost:8788/v1/chat/completions \\
-  -H "Authorization: Bearer sk-aegis-root-master-key" \\
+  -H "Authorization: Bearer sk-albatross-root-master-key" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "aegis-auto",
+    "model": "albatross-auto",
     "messages": [{"role": "user", "content": "Halo!"}],
     "stream": true
   }'`}
@@ -1238,7 +1238,7 @@ response = client.chat.completions.create(
                 Live Gateway Debug Bench & PII Simulator
               </h2>
               <p className="text-xs text-zinc-400">
-                Dispatch live prompts through Aegis. Observe real-time SSE streaming, in-flight PII redaction, and semantic cache hits.
+                Dispatch live prompts through Albatross. Observe real-time SSE streaming, in-flight PII redaction, and semantic cache hits.
               </p>
             </div>
 
@@ -1275,7 +1275,7 @@ response = client.chat.completions.create(
                         onChange={(e) => setPlaygroundModel(e.target.value)}
                         className="w-full bg-infra-850 border border-infra-700 rounded p-2 text-white"
                       >
-                        <option value="aegis-auto">aegis-auto (Auto Fallback)</option>
+                        <option value="albatross-auto">albatross-auto (Auto Fallback)</option>
                         <option value="llama-3.3-70b-versatile">llama-3.3-70b (Groq)</option>
                         <option value="gemini-2.0-flash">gemini-2.0-flash (Google)</option>
                         <option value="gpt-4o-mini">gpt-4o-mini (OpenAI)</option>
@@ -1380,7 +1380,7 @@ response = client.chat.completions.create(
 
       {/* Footer */}
       <footer className="border-t border-infra-800 py-3 px-6 text-xs text-zinc-500 font-mono flex items-center justify-between">
-        <div>Aegis AI Gateway · Enterprise LLM Middleware & Observability</div>
+        <div>Albatross AI Gateway · Enterprise LLM Middleware & Observability</div>
         <div className="flex items-center space-x-4">
           <span>Bun Native Runtime</span>
           <span>SQLite WAL</span>

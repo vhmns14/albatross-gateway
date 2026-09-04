@@ -72,7 +72,7 @@ export class TelemetryEngine {
         data.errorMessage || null
       );
     } catch (err) {
-      console.error("[Aegis Telemetry] Failed to log trace:", err);
+      console.error("[Albatross Telemetry] Failed to log trace:", err);
     }
   }
 

@@ -99,7 +99,7 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
     const spendLimit = Number(body.spendLimitUsd) || 50.0;
     const rateLimit = Number(body.rateLimitRpm) || 300;
 
-    const rawSecret = `sk-aegis-${Math.random().toString(36).substring(2, 10)}-${Date.now().toString(36)}`;
+    const rawSecret = `sk-albatross-${Math.random().toString(36).substring(2, 10)}-${Date.now().toString(36)}`;
     const prefix = rawSecret.substring(0, 14) + "...";
 
     const hasher = new Bun.CryptoHasher("sha256");

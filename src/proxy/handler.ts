@@ -1,5 +1,5 @@
 /**
- * Aegis AI Gateway - Unified OpenAI-Compatible Proxy Handler
+ * Albatross AI Gateway - Unified OpenAI-Compatible Proxy Handler
  * Handles /v1/chat/completions, /v1/models, and /v1/embeddings.
  */
 
@@ -47,7 +47,7 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
       JSON.stringify({ error: { message: auth.error, type: "authentication_error" } }),
       {
         status: auth.statusCode || 401,
-        headers: { "Content-Type": "application/json", "X-Aegis-Trace-Id": traceId },
+        headers: { "Content-Type": "application/json", "X-Albatross-Trace-Id": traceId },
       }
     );
   }
@@ -62,7 +62,7 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
     );
   }
 
-  const requestedModel = body.model || "aegis-auto";
+  const requestedModel = body.model || "albatross-auto";
   const messages = body.messages || [];
   const isStream = body.stream === true;
 
@@ -96,12 +96,12 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
     return new Response(
       JSON.stringify({
         error: {
-          message: "Request blocked by Aegis Guardrails: Potential prompt injection or policy breach.",
+          message: "Request blocked by Albatross Guardrails: Potential prompt injection or policy breach.",
           type: "guardrails_violation",
           flags: injectionFlags,
         },
       }),
-      { status: 422, headers: { "Content-Type": "application/json", "X-Aegis-Trace-Id": traceId } }
+      { status: 422, headers: { "Content-Type": "application/json", "X-Albatross-Trace-Id": traceId } }
     );
   }
 
@@ -170,11 +170,11 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
         headers: {
           "Content-Type": "text/event-stream; charset=utf-8",
           "Cache-Control": "no-cache",
-          "X-Aegis-Trace-Id": traceId,
-          "X-Aegis-Cache": "HIT",
-          "X-Aegis-Cache-Score": cacheResult.similarity.toString(),
-          "X-Aegis-Latency-Ms": totalLatency.toString(),
-          "X-Aegis-Cost-USD": "0.0000",
+          "X-Albatross-Trace-Id": traceId,
+          "X-Albatross-Cache": "HIT",
+          "X-Albatross-Cache-Score": cacheResult.similarity.toString(),
+          "X-Albatross-Latency-Ms": totalLatency.toString(),
+          "X-Albatross-Cost-USD": "0.0000",
         },
       });
     }
@@ -183,11 +183,11 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "X-Aegis-Trace-Id": traceId,
-        "X-Aegis-Cache": "HIT",
-        "X-Aegis-Cache-Score": cacheResult.similarity.toString(),
-        "X-Aegis-Latency-Ms": totalLatency.toString(),
-        "X-Aegis-Cost-USD": "0.0000",
+        "X-Albatross-Trace-Id": traceId,
+        "X-Albatross-Cache": "HIT",
+        "X-Albatross-Cache-Score": cacheResult.similarity.toString(),
+        "X-Albatross-Latency-Ms": totalLatency.toString(),
+        "X-Albatross-Cost-USD": "0.0000",
       },
     });
   }
@@ -228,13 +228,13 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
 
   // Prepare response headers
   const resHeaders = new Headers(routeResult.response.headers);
-  resHeaders.set("X-Aegis-Trace-Id", traceId);
-  resHeaders.set("X-Aegis-Cache", "MISS");
-  resHeaders.set("X-Aegis-Provider", routeResult.providerId);
-  resHeaders.set("X-Aegis-Model", routeResult.modelUsed);
-  resHeaders.set("X-Aegis-Latency-Ms", totalLatency.toString());
-  resHeaders.set("X-Aegis-Cost-USD", costUsd.toFixed(6));
-  resHeaders.set("X-Aegis-PII-Redacted", totalRedacted.toString());
+  resHeaders.set("X-Albatross-Trace-Id", traceId);
+  resHeaders.set("X-Albatross-Cache", "MISS");
+  resHeaders.set("X-Albatross-Provider", routeResult.providerId);
+  resHeaders.set("X-Albatross-Model", routeResult.modelUsed);
+  resHeaders.set("X-Albatross-Latency-Ms", totalLatency.toString());
+  resHeaders.set("X-Albatross-Cost-USD", costUsd.toFixed(6));
+  resHeaders.set("X-Albatross-PII-Redacted", totalRedacted.toString());
 
   // If successful non-streaming response, save to semantic cache asynchronously
   if (routeResult.success && !isStream) {
@@ -262,7 +262,7 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
 
 export function handleListModels(): Response {
   const models = [
-    { id: "aegis-auto", object: "model", created: 1700000000, owned_by: "aegis-gateway" },
+    { id: "albatross-auto", object: "model", created: 1700000000, owned_by: "albatross-gateway" },
     { id: "llama-3.3-70b-versatile", object: "model", created: 1700000000, owned_by: "groq" },
     { id: "gemini-2.0-flash", object: "model", created: 1700000000, owned_by: "google" },
     { id: "gpt-4o-mini", object: "model", created: 1700000000, owned_by: "openai" },

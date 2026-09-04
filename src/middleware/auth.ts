@@ -27,7 +27,7 @@ export function authenticateKey(req: Request): {
   if (!authHeader.startsWith("Bearer ")) {
     return {
       authorized: false,
-      error: "Missing or invalid Authorization header. Expected Bearer sk-aegis-...",
+      error: "Missing or invalid Authorization header. Expected Bearer sk-albatross-...",
       statusCode: 401,
     };
   }
