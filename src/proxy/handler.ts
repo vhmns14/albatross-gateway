@@ -3,14 +3,17 @@
  * Handles /v1/chat/completions, /v1/models, and /v1/embeddings.
  */
 
-import { authenticateKey, recordKeySpend } from "../middleware/auth";
+import { authenticateKey, recordKeySpend, getClientIp, safeCompare, checkRateLimit } from "../middleware/auth";
 import { sanitizeMessages } from "../guardrails/pii";
 import { semanticCache } from "../cache/semantic";
 import { dynamicRouter } from "../router/engine";
 import { telemetry } from "../telemetry/logger";
 import { CONFIG } from "../config";
 
-export async function handleChatCompletions(req: Request): Promise<Response> {
+export async function handleChatCompletions(
+  req: Request,
+  options: { isPlayground?: boolean } = {}
+): Promise<Response> {
   const reqStart = performance.now();
   const traceId = `trc_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
@@ -20,9 +23,45 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
   let cacheMs = 0;
   let upstreamMs = 0;
 
-  // 1. Virtual Key Authentication
+  // Check body size limit (prevent DoS)
+  const contentLength = Number(req.headers.get("content-length") || "0");
+  if (contentLength > CONFIG.MAX_BODY_BYTES) {
+    return new Response(
+      JSON.stringify({
+        error: {
+          message: `Payload too large. Maximum size is ${CONFIG.MAX_BODY_BYTES / 1024 / 1024}MB.`,
+          type: "invalid_request_error",
+        },
+      }),
+      { status: 413, headers: { "Content-Type": "application/json", "X-Albatross-Trace-Id": traceId } }
+    );
+  }
+
+  // 1. Authentication
   const authStart = performance.now();
-  const auth = authenticateKey(req);
+  let auth: any;
+  if (options.isPlayground) {
+    const clientIp = getClientIp(req);
+    const adminKey = req.headers.get("x-admin-key") || "";
+    const isAdmin = safeCompare(adminKey, CONFIG.ADMIN_PASSWORD);
+    const rateCheck = checkRateLimit(clientIp, isAdmin);
+
+    if (!rateCheck.allowed) {
+      return new Response(
+        JSON.stringify({ error: { message: rateCheck.error, type: "rate_limit_error" } }),
+        { status: 429, headers: { "Content-Type": "application/json", "X-Albatross-Trace-Id": traceId } }
+      );
+    }
+
+    auth = {
+      authorized: true,
+      key: { id: "playground_public", name: "Public Playground Demo", prefix: "demo" },
+      clientIp,
+      isAdmin,
+    };
+  } else {
+    auth = authenticateKey(req);
+  }
   authMs = Math.round(performance.now() - authStart);
 
   if (!auth.authorized) {
@@ -94,7 +133,7 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
       completionTokens: 0,
       costUsd: 0,
       latencyMs: totalLatency,
-      timingBreakdown: { authMs, guardrailMs, cacheMs: 0, upstreamMs: 0 },
+      timingBreakdown: { authMs, guardrailMs: 0, cacheMs: 0, upstreamMs: 0 },
       errorMessage: `Safety Policy Violation: Prompt injection patterns detected (${injectionFlags.join(", ")})`,
     });
 
@@ -116,17 +155,41 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
     messages: sanitizedMessages,
   };
 
-  // Extract last user prompt string for semantic caching
+  // Extract last user prompt string (supporting multimodal array or text)
   const lastUserPrompt =
     sanitizedMessages
       .filter((m: any) => m.role === "user")
-      .map((m: any) => m.content)
+      .map((m: any) => {
+        if (typeof m.content === "string") return m.content;
+        if (Array.isArray(m.content)) {
+          return m.content
+            .filter((p: any) => p && typeof p.text === "string")
+            .map((p: any) => p.text)
+            .join(" ");
+        }
+        return "";
+      })
       .join("\n") || "";
 
-  // 3. Semantic Cache Lookup (Bypass if temperature > 0.8 or explicitly disabled)
-  const cacheStart = performance.now();
-  const cacheResult = await semanticCache.lookup(requestedModel, lastUserPrompt);
-  cacheMs = Math.round(performance.now() - cacheStart);
+  // Extract system prompt persona to namespace cache (prevents cross-persona cache poisoning)
+  const systemPrompt = sanitizedMessages
+    .filter((m: any) => m.role === "system")
+    .map((m: any) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
+    .join("\n");
+  const contextHash = systemPrompt
+    ? new Bun.CryptoHasher("sha256").update(systemPrompt.trim()).digest("hex").slice(0, 16)
+    : "global";
+
+  // Temperature bypass: skip cache if temperature > 0.5 (user requested creative / diverse generation)
+  const isHighTemperature = typeof body.temperature === "number" && body.temperature > 0.5;
+
+  // 3. Semantic Cache Lookup
+  let cacheResult = { hit: false, similarity: 0.0, cachedResponse: undefined as any };
+  if (!isHighTemperature) {
+    const cacheStart = performance.now();
+    cacheResult = await semanticCache.lookup(requestedModel, lastUserPrompt, contextHash);
+    cacheMs = Math.round(performance.now() - cacheStart);
+  }
 
   if (cacheResult.hit && cacheResult.cachedResponse) {
     const totalLatency = Math.round(performance.now() - reqStart);
@@ -197,16 +260,16 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
     });
   }
 
-  // 4. Cache MISS -> Forward to Dynamic Router (Upstream with Fallback)
+  // 4. Cache MISS -> Forward to Dynamic Router (Upstream with Fallback & Client Abort Signal)
   const upstreamStart = performance.now();
-  const routeResult = await dynamicRouter.forwardChatCompletion(safeBody, req.headers);
+  const routeResult = await dynamicRouter.forwardChatCompletion(safeBody, req.headers, req.signal);
   upstreamMs = Math.round(performance.now() - upstreamStart);
 
   const totalLatency = Math.round(performance.now() - reqStart);
   const costUsd = routeResult.costUsd || 0.0002;
 
   // Record spend on virtual key
-  if (auth.key?.id) {
+  if (auth.key?.id && auth.key.id !== "playground_public") {
     recordKeySpend(auth.key.id, costUsd);
   }
 
@@ -241,8 +304,8 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
   resHeaders.set("X-Albatross-Cost-USD", costUsd.toFixed(6));
   resHeaders.set("X-Albatross-PII-Redacted", totalRedacted.toString());
 
-  // If successful non-streaming response, save to semantic cache asynchronously
-  if (routeResult.success && !isStream) {
+  // If successful non-streaming response, save to semantic cache
+  if (routeResult.success && !isHighTemperature && !isStream) {
     try {
       const cloned = routeResult.response.clone();
       cloned.json().then((json) => {
@@ -251,12 +314,79 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
           lastUserPrompt,
           json,
           routeResult.promptTokens,
-          routeResult.completionTokens
+          routeResult.completionTokens,
+          contextHash
         );
       });
     } catch (e) {
       // ignore
     }
+  }
+
+  // If successful streaming response, tee stream to asynchronously capture & cache
+  if (routeResult.success && !isHighTemperature && isStream && routeResult.response.body) {
+    const [clientStream, cacheStream] = routeResult.response.body.tee();
+
+    (async () => {
+      try {
+        const reader = cacheStream.getReader();
+        const decoder = new TextDecoder();
+        let fullAssistantContent = "";
+        let doneReading = false;
+
+        while (!doneReading) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunkText = decoder.decode(value, { stream: true });
+          const lines = chunkText.split("\n");
+          for (const line of lines) {
+            if (line.startsWith("data: ") && !line.includes("[DONE]")) {
+              try {
+                const parsed = JSON.parse(line.slice(6));
+                const delta = parsed.choices?.[0]?.delta?.content || "";
+                fullAssistantContent += delta;
+              } catch (err) {}
+            }
+          }
+        }
+
+        if (fullAssistantContent) {
+          const payload = {
+            id: `chatcmpl-${Date.now()}`,
+            object: "chat.completion",
+            created: Math.floor(Date.now() / 1000),
+            model: requestedModel,
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: fullAssistantContent },
+                finish_reason: "stop",
+              },
+            ],
+            usage: {
+              prompt_tokens: routeResult.promptTokens || 10,
+              completion_tokens: Math.ceil(fullAssistantContent.length / 4),
+              total_tokens: (routeResult.promptTokens || 10) + Math.ceil(fullAssistantContent.length / 4),
+            },
+          };
+          semanticCache.store(
+            requestedModel,
+            lastUserPrompt,
+            payload,
+            routeResult.promptTokens,
+            Math.ceil(fullAssistantContent.length / 4),
+            contextHash
+          );
+        }
+      } catch (e) {
+        // Stream read aborted or closed
+      }
+    })();
+
+    return new Response(clientStream, {
+      status: routeResult.response.status,
+      headers: resHeaders,
+    });
   }
 
   return new Response(routeResult.response.body, {

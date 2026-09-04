@@ -23,6 +23,7 @@ export const CONFIG = {
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || "albatross-admin-2026",
   PUBLIC_IP_RPM_LIMIT: Number(process.env.PUBLIC_IP_RPM_LIMIT) || 5, // max 5 req/min per IP
   MAX_PUBLIC_TOKENS: 250, // prevent huge token drains from public visitors
+  MAX_BODY_BYTES: 2 * 1024 * 1024, // 2MB max payload to prevent memory exhaustion DoS
   
   // Semantic Cache Configuration
   CACHE_ENABLED: process.env.ALBATROSS_CACHE_ENABLED !== "false",
@@ -44,7 +45,7 @@ export const CONFIG = {
       id: "justwoker",
       name: "JustWoker Frontier API (Claude Opus 5)",
       baseUrl: process.env.UPSTREAM_BASE_URL || "https://api.justwoker.icu/v1",
-      apiKey: process.env.UPSTREAM_API_KEY || "sk-51CwkIEk5K8v19LjPealL57XFJFSRTRYNSecZNfbjMNqJw7h",
+      apiKey: process.env.UPSTREAM_API_KEY || "",
       defaultModel: process.env.UPSTREAM_MODEL || "claude-opus-5",
       costPer1kInputTokens: 0.003,
       costPer1kOutputTokens: 0.015,

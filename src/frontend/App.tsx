@@ -308,13 +308,12 @@ export function App() {
     try {
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        Authorization: "Bearer sk-albatross-root-master-key",
       };
       if (isAdmin && adminPassword) {
         headers["x-admin-key"] = adminPassword;
       }
 
-      const response = await fetch("/v1/chat/completions", {
+      const response = await fetch("/api/playground/chat", {
         method: "POST",
         headers,
         body: JSON.stringify({

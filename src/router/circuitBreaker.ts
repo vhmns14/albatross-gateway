@@ -103,10 +103,22 @@ export class CircuitBreakerManager {
 
   /**
    * Record a failed request (HTTP 429, 5xx, or network timeout)
+   * Client errors (400, 404, 422) are ignored to prevent Denial of Service attacks.
    */
   public recordFailure(providerId: string, errorMsg: string, statusCode?: number) {
     const mem = this.memoryStates.get(providerId);
     if (!mem) return;
+
+    // Ignore client errors (4xx except 429 rate limit) - they are client bugs, not provider outages
+    const isClientError = statusCode && statusCode >= 400 && statusCode < 500 && statusCode !== 429;
+    if (isClientError) {
+      db.query(`
+        UPDATE provider_health 
+        SET last_error = ?, last_error_at = CURRENT_TIMESTAMP, total_requests = total_requests + 1, total_errors = total_errors + 1
+        WHERE provider_id = ?
+      `).run(errorMsg, providerId);
+      return;
+    }
 
     mem.consecutiveErrors += 1;
     const now = Date.now();

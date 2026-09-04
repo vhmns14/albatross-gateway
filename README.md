@@ -118,25 +118,21 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:8788/v1",
-    api_key="sk-albatross-root-master-key"  # Virtual key managed in Albatross Console
+    api_key="sk-albatross-your-virtual-key"  # Virtual key managed in Albatross Console
 )
 
 response = client.chat.completions.create(
-    model="albatross-auto",  # Automatically routes to fastest/healthiest provider
-    messages=[
-        {"role": "user", "content": "Halo, ini NIK saya 3201234567890001, tolong bantu."}
-    ],
-    stream=True
+    model="claude-opus-5",
+    messages=[{"role": "user", "content": "Jelaskan konsep semantic caching dalam 2 paragraf"}]
 )
-
-for chunk in response:
-    print(chunk.choices[0].delta.content or "", end="")
+print(response.choices[0].message.content)
 ```
 
 ### cURL
 ```bash
-curl -X POST http://localhost:8788/v1/chat/completions \
-  -H "Authorization: Bearer sk-albatross-root-master-key" \
+curl http://localhost:8788/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-albatross-your-virtual-key" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "albatross-auto",

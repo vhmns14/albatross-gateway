@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { sanitizeInput, sanitizeMessages } from "../src/guardrails/pii";
 import { generateLocalEmbedding, cosineSimilarity, semanticCache } from "../src/cache/semantic";
 import { circuitBreaker } from "../src/router/circuitBreaker";
+import { safeCompare } from "../src/middleware/auth";
 
 describe("1. In-Flight Guardrails & PII Sanitizer", () => {
   test("Redacts 16-digit Indonesian NIK", () => {
@@ -35,9 +36,26 @@ describe("1. In-Flight Guardrails & PII Sanitizer", () => {
     expect(result.isInjectionRisk).toBe(true);
     expect(result.injectionFlags.length).toBeGreaterThan(0);
   });
+
+  test("Sanitizes multimodal / Vision structured message array (MED-01 fix)", () => {
+    const messages = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "NIK saya 3201987654320002 mohon diproses." },
+          { type: "image_url", image_url: { url: "https://example.com/ktp.jpg" } }
+        ]
+      }
+    ];
+
+    const res = sanitizeMessages(messages);
+    expect(res.totalRedacted).toBe(1);
+    expect(res.sanitizedMessages[0].content[0].text).toContain("[REDACTED_NIK]");
+    expect(res.sanitizedMessages[0].content[0].text).not.toContain("3201987654320002");
+  });
 });
 
-describe("2. Semantic Caching Engine", () => {
+describe("2. Semantic Caching Engine & Multi-Tenant Isolation", () => {
   test("Generates normalized 128-dim embedding vectors", () => {
     const vec = generateLocalEmbedding("Apa itu AI Gateway?");
     expect(vec.length).toBe(128);
@@ -59,12 +77,43 @@ describe("2. Semantic Caching Engine", () => {
     const prompt = "Jelaskan arsitektur Albatross Gateway";
     const mockResponse = { choices: [{ message: { content: "Albatross is an enterprise LLM gateway" } }] };
 
-    await semanticCache.store("test-model", prompt, mockResponse, 10, 20);
-    const lookup = await semanticCache.lookup("test-model", prompt);
+    await semanticCache.store("test-model", prompt, mockResponse, 10, 20, "tenant_a");
+    const lookup = await semanticCache.lookup("test-model", prompt, "tenant_a");
 
     expect(lookup.hit).toBe(true);
     expect(lookup.similarity).toBeGreaterThanOrEqual(0.9);
     expect(lookup.cachedResponse.choices[0].message.content).toBe("Albatross is an enterprise LLM gateway");
+  });
+
+  test("Isolates cache namespaces across different system personas (HIGH-04 fix)", async () => {
+    const prompt = "Translate hello to native language";
+    const frenchResponse = { choices: [{ message: { content: "Bonjour" } }] };
+
+    await semanticCache.store("test-translator", prompt, frenchResponse, 5, 5, "ctx_french");
+
+    // Lookup with different context (German persona) must NOT hit French cache
+    const lookupGerman = await semanticCache.lookup("test-translator", prompt, "ctx_german");
+    expect(lookupGerman.hit).toBe(false);
+
+    // Lookup with matching context MUST hit
+    const lookupFrench = await semanticCache.lookup("test-translator", prompt, "ctx_french");
+    expect(lookupFrench.hit).toBe(true);
+    expect(lookupFrench.cachedResponse.choices[0].message.content).toBe("Bonjour");
+  });
+
+  test("Masks raw prompt snippets for public telemetry view (HIGH-05 fix)", async () => {
+    const statsPublic = semanticCache.getStats(false);
+    for (const query of statsPublic.topQueries) {
+      if (query.prompt_raw) {
+        expect(query.prompt_raw).toContain("[Protected Query]");
+      }
+    }
+
+    const statsAdmin = semanticCache.getStats(true);
+    // Admin sees unmasked query if present
+    if (statsAdmin.topQueries.length > 0 && statsAdmin.topQueries[0].prompt_raw) {
+      expect(statsAdmin.topQueries[0].prompt_raw).not.toContain("[Protected Query]");
+    }
   });
 });
 
@@ -75,15 +124,43 @@ describe("3. Circuit Breaker & Fault Tolerance", () => {
     expect(circuitBreaker.isAvailable("groq")).toBe(true);
   });
 
-  test("Trips to OPEN state when forced or on consecutive errors", () => {
-    circuitBreaker.forceTrip("groq", 10_000);
-    expect(circuitBreaker.isAvailable("groq")).toBe(false);
+  test("Ignores 4xx client errors without tripping circuit breaker (HIGH-01 fix)", () => {
+    circuitBreaker.forceReset("groq");
+    
+    // Simulate 5 client-side 400 Bad Request errors
+    for (let i = 0; i < 5; i++) {
+      circuitBreaker.recordFailure("groq", "HTTP 400: Invalid message schema", 400);
+    }
 
+    // Must remain healthy and CLOSED
+    expect(circuitBreaker.isAvailable("groq")).toBe(true);
+    const status = circuitBreaker.getAllStatus().find((p) => p.providerId === "groq");
+    expect(status?.state).toBe("CLOSED");
+  });
+
+  test("Trips to OPEN state on consecutive 5xx server errors", () => {
+    circuitBreaker.forceReset("groq");
+
+    // Simulate 3 server-side 502/503 errors
+    circuitBreaker.recordFailure("groq", "HTTP 502: Bad Gateway", 502);
+    circuitBreaker.recordFailure("groq", "HTTP 503: Service Unavailable", 503);
+    circuitBreaker.recordFailure("groq", "HTTP 500: Internal Server Error", 500);
+
+    expect(circuitBreaker.isAvailable("groq")).toBe(false);
     const status = circuitBreaker.getAllStatus().find((p) => p.providerId === "groq");
     expect(status?.state).toBe("OPEN");
 
-    // Reset back
+    // Clean up
     circuitBreaker.forceReset("groq");
     expect(circuitBreaker.isAvailable("groq")).toBe(true);
+  });
+});
+
+describe("4. Security Utilities & Timing Attacks", () => {
+  test("Performs constant-time comparison via safeCompare", () => {
+    expect(safeCompare("secret-token-123", "secret-token-123")).toBe(true);
+    expect(safeCompare("secret-token-123", "wrong-token-456")).toBe(false);
+    expect(safeCompare("short", "much-longer-string-with-different-length")).toBe(false);
+    expect(safeCompare("", "something")).toBe(false);
   });
 });

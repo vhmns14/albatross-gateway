@@ -21,6 +21,35 @@ const rateLimitBuckets = new Map<string, number[]>();
 // In-memory IP rate limiting counters for public demo protection (IP -> timestamps)
 const ipRateLimitBuckets = new Map<string, number[]>();
 
+// Constant-time string comparison to prevent timing attacks
+export function safeCompare(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  const hashA = new Bun.CryptoHasher("sha256").update(a).digest();
+  const hashB = new Bun.CryptoHasher("sha256").update(b).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
+
+// Memory leak guard: sweep expired timestamps every 2 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, timestamps] of ipRateLimitBuckets.entries()) {
+    const valid = timestamps.filter((t) => now - t < 60_000);
+    if (valid.length === 0) {
+      ipRateLimitBuckets.delete(ip);
+    } else {
+      ipRateLimitBuckets.set(ip, valid);
+    }
+  }
+  for (const [keyId, timestamps] of rateLimitBuckets.entries()) {
+    const valid = timestamps.filter((t) => now - t < 60_000);
+    if (valid.length === 0) {
+      rateLimitBuckets.delete(keyId);
+    } else {
+      rateLimitBuckets.set(keyId, valid);
+    }
+  }
+}, 120_000);
+
 export function getClientIp(req: Request): string {
   return (
     req.headers.get("cf-connecting-ip") ||
@@ -28,6 +57,24 @@ export function getClientIp(req: Request): string {
     req.headers.get("x-real-ip") ||
     "127.0.0.1"
   );
+}
+
+export function checkRateLimit(clientIp: string, isAdmin = false): { allowed: boolean; error?: string } {
+  if (isAdmin) return { allowed: true };
+  const now = Date.now();
+  const ipTimestamps = ipRateLimitBuckets.get(clientIp) || [];
+  const validIpTimestamps = ipTimestamps.filter((t) => now - t < 60_000);
+
+  if (validIpTimestamps.length >= CONFIG.PUBLIC_IP_RPM_LIMIT) {
+    return {
+      allowed: false,
+      error: `Public rate limit exceeded (${CONFIG.PUBLIC_IP_RPM_LIMIT} requests/min per IP) to protect upstream budget. Please wait 1 minute.`,
+    };
+  }
+
+  validIpTimestamps.push(now);
+  ipRateLimitBuckets.set(clientIp, validIpTimestamps);
+  return { allowed: true };
 }
 
 export function authenticateKey(req: Request): {
@@ -39,26 +86,18 @@ export function authenticateKey(req: Request): {
   statusCode?: number;
 } {
   const clientIp = getClientIp(req);
-  const adminKey = req.headers.get("x-admin-key");
-  const isAdmin = adminKey === CONFIG.ADMIN_PASSWORD;
+  const adminKey = req.headers.get("x-admin-key") || "";
+  const isAdmin = safeCompare(adminKey, CONFIG.ADMIN_PASSWORD);
 
   // 1. IP-Based Abuse Protection (Enforced for non-admins)
-  if (!isAdmin) {
-    const now = Date.now();
-    const ipTimestamps = ipRateLimitBuckets.get(clientIp) || [];
-    const validIpTimestamps = ipTimestamps.filter((t) => now - t < 60_000);
-
-    if (validIpTimestamps.length >= CONFIG.PUBLIC_IP_RPM_LIMIT) {
-      return {
-        authorized: false,
-        clientIp,
-        error: `Public demo rate limit exceeded (${CONFIG.PUBLIC_IP_RPM_LIMIT} requests/min per IP) to protect upstream budget. Please wait 1 minute.`,
-        statusCode: 429,
-      };
-    }
-
-    validIpTimestamps.push(now);
-    ipRateLimitBuckets.set(clientIp, validIpTimestamps);
+  const rateLimitCheck = checkRateLimit(clientIp, isAdmin);
+  if (!rateLimitCheck.allowed) {
+    return {
+      authorized: false,
+      clientIp,
+      error: rateLimitCheck.error,
+      statusCode: 429,
+    };
   }
 
   // 2. Authorization Header Check

@@ -39,7 +39,8 @@ export class DynamicRouter {
    */
   public async forwardChatCompletion(
     body: any,
-    headers: Headers
+    headers: Headers,
+    clientSignal?: AbortSignal
   ): Promise<ForwardResult> {
     const requestedModel = body.model || "default";
     const isStream = body.stream === true;
@@ -74,10 +75,18 @@ export class DynamicRouter {
         };
 
         const targetUrl = `${provider.baseUrl.replace(/\/$/, "")}/chat/completions`;
-        const authHeader = provider.apiKey ? `Bearer ${provider.apiKey}` : headers.get("authorization") || "";
+        const authHeader = provider.apiKey ? `Bearer ${provider.apiKey}` : "";
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), CONFIG.UPSTREAM_TIMEOUT_MS);
+
+        if (clientSignal) {
+          if (clientSignal.aborted) {
+            controller.abort();
+          } else {
+            clientSignal.addEventListener("abort", () => controller.abort(), { once: true });
+          }
+        }
 
         // If no API key is provided in environment, simulate a high-performance mock engine
         // so the gateway is 100% testable out of the box!
@@ -105,7 +114,7 @@ export class DynamicRouter {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: authHeader,
+            ...(authHeader ? { Authorization: authHeader } : {}),
           },
           body: JSON.stringify(upstreamBody),
           signal: controller.signal,
@@ -116,8 +125,28 @@ export class DynamicRouter {
 
         if (!upstreamRes.ok) {
           const errText = await upstreamRes.text().catch(() => "Unknown error");
-          console.warn(`[Aegis Router] Provider ${provider.id} returned HTTP ${upstreamRes.status}: ${errText.slice(0, 100)}`);
+          console.warn(`[Albatross Router] Provider ${provider.id} returned HTTP ${upstreamRes.status}: ${errText.slice(0, 100)}`);
+          
+          const isClientError = upstreamRes.status >= 400 && upstreamRes.status < 500 && upstreamRes.status !== 429;
           circuitBreaker.recordFailure(provider.id, `HTTP ${upstreamRes.status}: ${errText.slice(0, 80)}`, upstreamRes.status);
+          
+          // Return client errors directly to caller without failing through or tripping circuit breaker
+          if (isClientError) {
+            return {
+              success: false,
+              providerId: provider.id,
+              modelUsed: targetModel,
+              isFallback,
+              fallbackChain,
+              response: new Response(errText, {
+                status: upstreamRes.status,
+                headers: { "Content-Type": "application/json" },
+              }),
+              latencyMs: latency,
+              error: errText,
+            };
+          }
+
           lastError = `HTTP ${upstreamRes.status} on ${provider.id}`;
           continue; // Try next provider in fallback chain
         }

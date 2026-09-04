@@ -9,23 +9,56 @@ import { semanticCache } from "../cache/semantic";
 import { db } from "../db";
 import { sanitizeInput } from "../guardrails/pii";
 import { CONFIG } from "../config";
+import { safeCompare, getClientIp, checkRateLimit } from "../middleware/auth";
+import { handleChatCompletions } from "../proxy/handler";
 
-function verifyAdmin(req: Request): boolean {
+const adminLockouts = new Map<string, { failedAttempts: number; lockedUntil: number }>();
+
+export function verifyAdmin(req: Request): boolean {
   const adminKey = req.headers.get("x-admin-key") || "";
-  return adminKey === CONFIG.ADMIN_PASSWORD;
+  return safeCompare(adminKey, CONFIG.ADMIN_PASSWORD);
 }
 
 export async function handleConsoleApi(req: Request, path: string): Promise<Response> {
   const method = req.method;
 
-  // 0. Admin Verification Endpoint
+  // 0. Admin Verification Endpoint with Brute-Force Lockout Protection
   if (path === "/api/admin/verify" && method === "POST") {
+    const clientIp = getClientIp(req);
+    const now = Date.now();
+    const lockout = adminLockouts.get(clientIp);
+
+    if (lockout && lockout.lockedUntil > now) {
+      const waitSecs = Math.ceil((lockout.lockedUntil - now) / 1000);
+      return Response.json(
+        { success: false, error: `Too many failed admin login attempts. Locked out for ${waitSecs}s.` },
+        { status: 429 }
+      );
+    }
+
     const body = (await req.json().catch(() => ({}))) as any;
     const password = body.password || req.headers.get("x-admin-key") || "";
-    if (password === CONFIG.ADMIN_PASSWORD) {
+
+    if (safeCompare(password, CONFIG.ADMIN_PASSWORD)) {
+      adminLockouts.delete(clientIp);
       return Response.json({ success: true, isAdmin: true });
     }
-    return Response.json({ success: false, error: "Invalid admin password" }, { status: 401 });
+
+    const attempts = (lockout?.failedAttempts || 0) + 1;
+    if (attempts >= 5) {
+      adminLockouts.set(clientIp, { failedAttempts: attempts, lockedUntil: now + 5 * 60_000 });
+      return Response.json(
+        { success: false, error: "Too many failed attempts. Account locked out for 5 minutes." },
+        { status: 429 }
+      );
+    } else {
+      adminLockouts.set(clientIp, { failedAttempts: attempts, lockedUntil: 0 });
+    }
+
+    return Response.json(
+      { success: false, error: `Invalid admin password. (${5 - attempts} attempts remaining)` },
+      { status: 401 }
+    );
   }
 
   // 1. Telemetry Overview (Public Read-Only)
@@ -41,12 +74,22 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
     return Response.json({ traces });
   }
 
-  // 3. Trace Details (Public Read-Only)
+  // 3. Trace Details (Public Read-Only with Sensitive Data Masking for Non-Admins)
   if (path.startsWith("/api/traces/") && method === "GET") {
     const traceId = path.replace("/api/traces/", "");
     const trace = telemetry.getTraceDetail(traceId);
     if (!trace) {
       return Response.json({ error: "Trace not found" }, { status: 404 });
+    }
+    const isAdmin = verifyAdmin(req);
+    if (!isAdmin) {
+      return Response.json({
+        trace: {
+          ...trace,
+          client_ip: trace.client_ip ? trace.client_ip.split(".").slice(0, 2).join(".") + ".x.x" : "x.x.x.x",
+          key_id: trace.key_id ? trace.key_id.slice(0, 7) + "..." : null,
+        },
+      });
     }
     return Response.json({ trace });
   }
@@ -83,9 +126,10 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
     return Response.json({ error: "Missing providerId" }, { status: 400 });
   }
 
-  // 5. Semantic Cache Management
+  // 5. Semantic Cache Management (Safe against prompt leakage)
   if (path === "/api/cache" && method === "GET") {
-    const stats = semanticCache.getStats();
+    const isAdmin = verifyAdmin(req);
+    const stats = semanticCache.getStats(isAdmin);
     return Response.json(stats);
   }
 
@@ -169,12 +213,22 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
     return Response.json({ success: true, message: "Virtual key revoked" });
   }
 
-  // 7. Interactive Guardrail / PII Preview Tester
+  // 7. Interactive Guardrail / PII Preview Tester (Rate limited & bounded)
   if (path === "/api/simulate-pii" && method === "POST") {
+    const clientIp = getClientIp(req);
+    const rateCheck = checkRateLimit(clientIp, verifyAdmin(req));
+    if (!rateCheck.allowed) {
+      return Response.json({ error: rateCheck.error }, { status: 429 });
+    }
     const body = (await req.json().catch(() => ({}))) as any;
-    const text = body.text || "";
+    const text = typeof body.text === "string" ? body.text.slice(0, 10_000) : "";
     const result = sanitizeInput(text);
     return Response.json(result);
+  }
+
+  // 8. Public Playground Chat Execution (Safe Sandbox, No Client Key Needed)
+  if (path === "/api/playground/chat" && method === "POST") {
+    return handleChatCompletions(req, { isPlayground: true });
   }
 
   return Response.json({ error: "Endpoint not found" }, { status: 404 });

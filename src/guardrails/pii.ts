@@ -167,6 +167,24 @@ export function sanitizeMessages(messages: any[]): {
         entityMap.set(e.type, (entityMap.get(e.type) || 0) + e.count);
       });
       return { ...msg, content: res.sanitizedText };
+    } else if (Array.isArray(msg.content)) {
+      // OpenAI Vision / Multimodal message parts
+      const sanitizedParts = msg.content.map((part: any) => {
+        if (part && typeof part.text === "string") {
+          const res = sanitizeInput(part.text);
+          totalRedacted += res.redactedCount;
+          if (res.isInjectionRisk) {
+            hasInjection = true;
+            flags.push(...res.injectionFlags);
+          }
+          res.entities.forEach((e) => {
+            entityMap.set(e.type, (entityMap.get(e.type) || 0) + e.count);
+          });
+          return { ...part, text: res.sanitizedText };
+        }
+        return part;
+      });
+      return { ...msg, content: sanitizedParts };
     }
     return msg;
   });

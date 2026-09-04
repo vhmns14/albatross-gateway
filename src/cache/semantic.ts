@@ -98,12 +98,18 @@ export class SemanticCache {
   }
 
   /**
-   * Look up prompt in cache
+   * Look up prompt in cache with optional context/system prompt namespace
    */
-  public async lookup(model: string, promptText: string): Promise<CacheLookupResult> {
+  public async lookup(
+    model: string,
+    promptText: string,
+    contextHash = "global"
+  ): Promise<CacheLookupResult> {
     if (!CONFIG.CACHE_ENABLED || !promptText) {
       return { hit: false, similarity: 0.0 };
     }
+
+    const cacheKeyModel = `${model}:${contextHash}`;
 
     // 1. Check exact SHA-256 hash first (<1ms)
     const hasher = new Bun.CryptoHasher("sha256");
@@ -114,7 +120,7 @@ export class SemanticCache {
       .query(
         "SELECT id, response_payload, hit_count FROM semantic_cache WHERE model = ? AND prompt_hash = ? LIMIT 1"
       )
-      .get(model, promptHash) as any;
+      .get(cacheKeyModel, promptHash) as any;
 
     if (exactMatch) {
       // Update hit counter
@@ -138,15 +144,15 @@ export class SemanticCache {
     // 2. Compute vector embedding
     const queryVector = generateLocalEmbedding(promptText);
 
-    // 3. Scan recent candidate vectors for this model (limit to recent 200 items for high speed)
+    // 3. Scan recent candidate vectors (Only fetch embedding_vector to minimize RAM footprint)
     const candidates = db
       .query(
-        "SELECT id, prompt_raw, embedding_vector, response_payload, hit_count FROM semantic_cache WHERE model = ? ORDER BY last_hit_at DESC LIMIT 200"
+        "SELECT id, embedding_vector FROM semantic_cache WHERE model = ? ORDER BY last_hit_at DESC LIMIT 200"
       )
-      .all(model) as any[];
+      .all(cacheKeyModel) as any[];
 
     let bestSimilarity = 0.0;
-    let bestMatch: any = null;
+    let bestMatchId: string | null = null;
 
     for (const cand of candidates) {
       try {
@@ -154,28 +160,34 @@ export class SemanticCache {
         const sim = cosineSimilarity(queryVector, candVector);
         if (sim > bestSimilarity) {
           bestSimilarity = sim;
-          bestMatch = cand;
+          bestMatchId = cand.id;
         }
       } catch (err) {
         continue;
       }
     }
 
-    if (bestMatch && bestSimilarity >= this.threshold) {
+    if (bestMatchId && bestSimilarity >= this.threshold) {
       db.query(
         "UPDATE semantic_cache SET hit_count = hit_count + 1, last_hit_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).run(bestMatch.id);
+      ).run(bestMatchId);
 
-      try {
-        const payload = JSON.parse(bestMatch.response_payload);
-        return {
-          hit: true,
-          similarity: Number(bestSimilarity.toFixed(4)),
-          cachedResponse: payload,
-          cacheId: bestMatch.id,
-        };
-      } catch (e) {
-        // continue
+      const matchedRow = db
+        .query("SELECT response_payload FROM semantic_cache WHERE id = ? LIMIT 1")
+        .get(bestMatchId) as any;
+
+      if (matchedRow) {
+        try {
+          const payload = JSON.parse(matchedRow.response_payload);
+          return {
+            hit: true,
+            similarity: Number(bestSimilarity.toFixed(4)),
+            cachedResponse: payload,
+            cacheId: bestMatchId,
+          };
+        } catch (e) {
+          // continue
+        }
       }
     }
 
@@ -193,10 +205,12 @@ export class SemanticCache {
     promptText: string,
     responsePayload: any,
     promptTokens = 0,
-    completionTokens = 0
+    completionTokens = 0,
+    contextHash = "global"
   ): Promise<string> {
     if (!CONFIG.CACHE_ENABLED || !promptText) return "";
 
+    const cacheKeyModel = `${model}:${contextHash}`;
     const id = `cache_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const hasher = new Bun.CryptoHasher("sha256");
     hasher.update(promptText.trim());
@@ -210,9 +224,9 @@ export class SemanticCache {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
     `).run(
       id,
-      model,
+      cacheKeyModel,
       promptHash,
-      promptText.slice(0, 1000), // preserve raw prompt snippet
+      promptText.slice(0, 500), // store bounded snippet
       JSON.stringify(vector),
       JSON.stringify(responsePayload),
       promptTokens,
@@ -227,7 +241,7 @@ export class SemanticCache {
    */
   public purge(model?: string): number {
     if (model) {
-      const res = db.query("DELETE FROM semantic_cache WHERE model = ?").run(model);
+      const res = db.query("DELETE FROM semantic_cache WHERE model LIKE ?").run(`${model}%`);
       return res.changes;
     }
     const res = db.query("DELETE FROM semantic_cache").run();
@@ -237,7 +251,7 @@ export class SemanticCache {
   /**
    * Retrieve statistics
    */
-  public getStats() {
+  public getStats(isAdmin = false) {
     const totalEntries = (
       db.query("SELECT COUNT(*) as count FROM semantic_cache").get() as any
     )?.count || 0;
@@ -248,13 +262,23 @@ export class SemanticCache {
       .query(
         "SELECT id, model, prompt_raw, hit_count, last_hit_at FROM semantic_cache ORDER BY hit_count DESC LIMIT 10"
       )
-      .all();
+      .all() as any[];
+
+    // Mask prompt_raw if not authenticated admin to protect user privacy
+    const safeTopQueries = topQueries.map((q) => ({
+      ...q,
+      prompt_raw: isAdmin
+        ? q.prompt_raw
+        : q.prompt_raw
+        ? `${q.prompt_raw.slice(0, 15)}... [Protected Query]`
+        : "",
+    }));
 
     return {
       totalEntries,
       totalHits,
       threshold: this.threshold,
-      topQueries,
+      topQueries: safeTopQueries,
     };
   }
 }

@@ -98,7 +98,8 @@ export function initDatabase() {
   // Insert default root virtual key if none exists
   const existingKey = db.query("SELECT id FROM virtual_keys LIMIT 1").get();
   if (!existingKey) {
-    const defaultRawKey = "sk-albatross-root-master-key";
+    const defaultRawKey = process.env.INITIAL_ROOT_KEY || `sk-albatross-root-${crypto.randomUUID().replace(/-/g, "")}`;
+    const prefix = defaultRawKey.substring(0, 18);
     const hasher = new Bun.CryptoHasher("sha256");
     hasher.update(defaultRawKey);
     const keyHash = hasher.digest("hex");
@@ -110,13 +111,13 @@ export function initDatabase() {
       "key_root_01",
       "Production Root Gateway Key",
       keyHash,
-      "sk-albatross-root",
+      prefix,
       500.0,
       0.0,
       1200,
       1
     );
-    console.log("[Albatross DB] Initialized default key: sk-albatross-root-master-key");
+    console.log(`[Albatross DB] Initialized secure root key: ${defaultRawKey} (Save this key, it won't be shown again)`);
   }
 }
 

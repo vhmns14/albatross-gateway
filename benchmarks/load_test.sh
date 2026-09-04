@@ -2,7 +2,7 @@
 # Albatross Gateway - Latency & Overhead Benchmark Script
 
 GATEWAY_URL=${1:-"http://localhost:8788"}
-VIRTUAL_KEY=${2:-"sk-albatross-root-master-key"}
+VIRTUAL_KEY=${2:-${INITIAL_ROOT_KEY:-"sk-albatross-test-key"}}
 
 echo "=========================================================="
 echo " 🪶  Albatross AI Gateway - Latency & Caching Benchmark"

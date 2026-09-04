@@ -100,9 +100,13 @@ export class TelemetryEngine {
       db.query("SELECT SUM(pii_redacted_count) as total FROM request_traces").get() as any
     )?.total || 0;
 
-    // Latency percentiles (P50, P95, P99)
+    // Latency percentiles (P50, P95, P99) sampled over recent 1,000 requests to prevent unbounded memory growth
     const latencies = db
-      .query("SELECT latency_ms FROM request_traces WHERE status_code = 200 ORDER BY latency_ms ASC")
+      .query(`
+        SELECT latency_ms FROM (
+          SELECT latency_ms FROM request_traces WHERE status_code = 200 ORDER BY created_at DESC LIMIT 1000
+        ) ORDER BY latency_ms ASC
+      `)
       .all()
       .map((r: any) => r.latency_ms);
 
