@@ -338,5 +338,14 @@ describe("7. CORS Hardening & Cross-Origin Read Protections", () => {
   });
 });
 
+describe("8. Configuration & Fail-Closed Credentials", () => {
+  test("Never uses a default fallback password", () => {
+    const { CONFIG } = require("../src/config");
+    expect(CONFIG.ADMIN_PASSWORD).not.toBe("albatross-admin-2026");
+    expect(CONFIG.ADMIN_PASSWORD.length).toBeGreaterThanOrEqual(12);
+  });
+});
+
+
 
 

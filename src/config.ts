@@ -14,13 +14,28 @@ export interface ProviderConfig {
   isEnabled: boolean;
 }
 
+function getAdminPassword(): string {
+  const envPass = process.env.ADMIN_PASSWORD;
+  if (envPass && envPass.trim().length > 0) {
+    return envPass.trim();
+  }
+  // During unit test runs, supply a dedicated test fixture password
+  if (process.env.NODE_ENV === "test" || (typeof Bun !== "undefined" && Bun.env.NODE_ENV === "test")) {
+    return "test-albatross-admin-secret-key-12345";
+  }
+  // Fail-closed in all live environments (dev/prod) to prevent default password takeover
+  throw new Error(
+    "[FATAL SECURITY CONFIGURATION ERROR] ADMIN_PASSWORD environment variable is required and cannot be empty. Generate a strong secret with: openssl rand -hex 24"
+  );
+}
+
 export const CONFIG = {
   PORT: Number(process.env.PORT) || 8788,
   HOST: process.env.HOST || "0.0.0.0",
   ENV: process.env.NODE_ENV || "development",
   
-  // Security & Admin Credentials
-  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || "albatross-admin-2026",
+  // Security & Admin Credentials (Strictly validated, no default fallback)
+  ADMIN_PASSWORD: getAdminPassword(),
   PUBLIC_IP_RPM_LIMIT: Number(process.env.PUBLIC_IP_RPM_LIMIT) || 5, // max 5 req/min per IP
   MAX_PUBLIC_TOKENS: 250, // prevent huge token drains from public visitors
   MAX_BODY_BYTES: 2 * 1024 * 1024, // 2MB max payload to prevent memory exhaustion DoS
