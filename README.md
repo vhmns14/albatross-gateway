@@ -6,7 +6,8 @@
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-albatross--gateway.style.dev-00f2fe?style=flat&logo=cloudflare)](https://albatross-gateway.style.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg)](https://opensource.org/licenses/MIT)
 
-🌐 **Live Production Console:** [https://albatross-gateway.style.dev](https://albatross-gateway.style.dev)
+🌐 **Live Production Console:** [https://albatross-gateway.style.dev](https://albatross-gateway.style.dev)  
+📜 **Project Milestones & Security Hardening Log:** [MILESTONES.md](MILESTONES.md)
 
 ---
 
