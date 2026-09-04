@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aegis AI Gateway · Enterprise LLM Middleware & Observability</title>
+  <meta name="description" content="Sub-15ms LLM reverse proxy with semantic caching, circuit breaker fallback, PII guardrails, and telemetry." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Inter"', 'system-ui', '-apple-system', 'sans-serif'],
+            mono: ['"Geist Mono"', 'JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            infra: {
+              950: '#09090b', // base canvas
+              900: '#121215', // surface card
+              850: '#18181b', // elevated surface
+              800: '#27272a', // crisp border
+              700: '#3f3f46', // subtle border
+              muted: '#71717a',
+              text: '#f4f4f5',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #09090b;
+      color: #f4f4f5;
+    }
+    /* Monospace tabular figures for metrics */
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+    /* Clean custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #09090b;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #27272a;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #3f3f46;
+    }
+  </style>
+</head>
+<body class="bg-infra-950 text-infra-text antialiased font-sans min-h-screen selection:bg-zinc-800 selection:text-white">
+  <div id="root"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
