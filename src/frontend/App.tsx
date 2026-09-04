@@ -1275,7 +1275,8 @@ response = client.chat.completions.create(
                         onChange={(e) => setPlaygroundModel(e.target.value)}
                         className="w-full bg-infra-850 border border-infra-700 rounded p-2 text-white"
                       >
-                        <option value="albatross-auto">albatross-auto (Auto Fallback)</option>
+                        <option value="albatross-auto">albatross-auto (Frontier Fallback)</option>
+                        <option value="claude-opus-5">claude-opus-5 (JustWoker)</option>
                         <option value="llama-3.3-70b-versatile">llama-3.3-70b (Groq)</option>
                         <option value="gemini-2.0-flash">gemini-2.0-flash (Google)</option>
                         <option value="gpt-4o-mini">gpt-4o-mini (OpenAI)</option>

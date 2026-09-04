@@ -31,10 +31,21 @@ export const CONFIG = {
   // Circuit Breaker Settings
   MAX_CONSECUTIVE_ERRORS: 3,
   COOLDOWN_PERIOD_MS: 30_000, // 30 seconds
-  UPSTREAM_TIMEOUT_MS: 15_000, // 15 seconds
+  UPSTREAM_TIMEOUT_MS: 30_000, // 30 seconds (accommodate reasoning/thinking models)
   
-  // Upstream Providers
+  // Upstream Providers (Prioritized Fallback Chain)
   PROVIDERS: [
+    {
+      id: "justwoker",
+      name: "JustWoker Frontier API (Claude Opus 5)",
+      baseUrl: process.env.UPSTREAM_BASE_URL || "https://api.justwoker.icu/v1",
+      apiKey: process.env.UPSTREAM_API_KEY || "sk-51CwkIEk5K8v19LjPealL57XFJFSRTRYNSecZNfbjMNqJw7h",
+      defaultModel: process.env.UPSTREAM_MODEL || "claude-opus-5",
+      costPer1kInputTokens: 0.003,
+      costPer1kOutputTokens: 0.015,
+      priority: 1,
+      isEnabled: true,
+    },
     {
       id: "groq",
       name: "Groq LPU (Ultra-Low Latency)",
@@ -43,7 +54,7 @@ export const CONFIG = {
       defaultModel: "llama-3.3-70b-versatile",
       costPer1kInputTokens: 0.00059,
       costPer1kOutputTokens: 0.00079,
-      priority: 1,
+      priority: 2,
       isEnabled: true,
     },
     {
@@ -54,7 +65,7 @@ export const CONFIG = {
       defaultModel: "gemini-2.0-flash",
       costPer1kInputTokens: 0.00010,
       costPer1kOutputTokens: 0.00040,
-      priority: 2,
+      priority: 3,
       isEnabled: true,
     },
     {
@@ -65,7 +76,7 @@ export const CONFIG = {
       defaultModel: "gpt-4o-mini",
       costPer1kInputTokens: 0.00015,
       costPer1kOutputTokens: 0.00060,
-      priority: 3,
+      priority: 4,
       isEnabled: true,
     },
     {
@@ -76,7 +87,7 @@ export const CONFIG = {
       defaultModel: "llama3.2:3b",
       costPer1kInputTokens: 0.0,
       costPer1kOutputTokens: 0.0,
-      priority: 4,
+      priority: 5,
       isEnabled: false,
     }
   ] as ProviderConfig[],

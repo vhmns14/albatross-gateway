@@ -263,6 +263,8 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
 export function handleListModels(): Response {
   const models = [
     { id: "albatross-auto", object: "model", created: 1700000000, owned_by: "albatross-gateway" },
+    { id: "claude-opus-5", object: "model", created: 1700000000, owned_by: "anthropic" },
+    { id: "claude-opus-5-thinking", object: "model", created: 1700000000, owned_by: "anthropic" },
     { id: "llama-3.3-70b-versatile", object: "model", created: 1700000000, owned_by: "groq" },
     { id: "gemini-2.0-flash", object: "model", created: 1700000000, owned_by: "google" },
     { id: "gpt-4o-mini", object: "model", created: 1700000000, owned_by: "openai" },
