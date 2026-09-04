@@ -19,6 +19,11 @@ export const CONFIG = {
   HOST: process.env.HOST || "0.0.0.0",
   ENV: process.env.NODE_ENV || "development",
   
+  // Security & Admin Credentials
+  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || "albatross-admin-2026",
+  PUBLIC_IP_RPM_LIMIT: Number(process.env.PUBLIC_IP_RPM_LIMIT) || 5, // max 5 req/min per IP
+  MAX_PUBLIC_TOKENS: 250, // prevent huge token drains from public visitors
+  
   // Semantic Cache Configuration
   CACHE_ENABLED: process.env.ALBATROSS_CACHE_ENABLED !== "false",
   SIMILARITY_THRESHOLD: Number(process.env.ALBATROSS_SIMILARITY_THRESHOLD) || 0.90,

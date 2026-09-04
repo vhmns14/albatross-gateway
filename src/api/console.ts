@@ -1,5 +1,5 @@
 /**
- * Aegis AI Gateway - Console & Management API
+ * Albatross AI Gateway - Console & Management API
  * Provides telemetry metrics, trace waterfalls, circuit breaker control, and key management.
  */
 
@@ -8,24 +8,40 @@ import { circuitBreaker } from "../router/circuitBreaker";
 import { semanticCache } from "../cache/semantic";
 import { db } from "../db";
 import { sanitizeInput } from "../guardrails/pii";
+import { CONFIG } from "../config";
+
+function verifyAdmin(req: Request): boolean {
+  const adminKey = req.headers.get("x-admin-key") || "";
+  return adminKey === CONFIG.ADMIN_PASSWORD;
+}
 
 export async function handleConsoleApi(req: Request, path: string): Promise<Response> {
   const method = req.method;
 
-  // 1. Telemetry Overview
+  // 0. Admin Verification Endpoint
+  if (path === "/api/admin/verify" && method === "POST") {
+    const body = (await req.json().catch(() => ({}))) as any;
+    const password = body.password || req.headers.get("x-admin-key") || "";
+    if (password === CONFIG.ADMIN_PASSWORD) {
+      return Response.json({ success: true, isAdmin: true });
+    }
+    return Response.json({ success: false, error: "Invalid admin password" }, { status: 401 });
+  }
+
+  // 1. Telemetry Overview (Public Read-Only)
   if (path === "/api/overview" && method === "GET") {
     const data = telemetry.getOverviewMetrics();
     const providers = circuitBreaker.getAllStatus();
     return Response.json({ ...data, providers });
   }
 
-  // 2. Traces List
+  // 2. Traces List (Public Read-Only)
   if (path === "/api/traces" && method === "GET") {
     const traces = telemetry.getRecentTraces(50);
     return Response.json({ traces });
   }
 
-  // 3. Trace Details (Waterfall)
+  // 3. Trace Details (Public Read-Only)
   if (path.startsWith("/api/traces/") && method === "GET") {
     const traceId = path.replace("/api/traces/", "");
     const trace = telemetry.getTraceDetail(traceId);
@@ -42,6 +58,9 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
   }
 
   if (path === "/api/providers/simulate-trip" && method === "POST") {
+    if (!verifyAdmin(req)) {
+      return Response.json({ error: "Unauthorized: Action requires admin privileges." }, { status: 403 });
+    }
     const body = (await req.json().catch(() => ({}))) as any;
     const providerId = body.providerId;
     if (providerId) {
@@ -52,6 +71,9 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
   }
 
   if (path === "/api/providers/reset" && method === "POST") {
+    if (!verifyAdmin(req)) {
+      return Response.json({ error: "Unauthorized: Action requires admin privileges." }, { status: 403 });
+    }
     const body = (await req.json().catch(() => ({}))) as any;
     const providerId = body.providerId;
     if (providerId) {
@@ -68,6 +90,9 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
   }
 
   if (path === "/api/cache/threshold" && method === "POST") {
+    if (!verifyAdmin(req)) {
+      return Response.json({ error: "Unauthorized: Modifying cache threshold requires admin privileges." }, { status: 403 });
+    }
     const body = (await req.json().catch(() => ({}))) as any;
     if (typeof body.threshold === "number") {
       semanticCache.setThreshold(body.threshold);
@@ -77,6 +102,9 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
   }
 
   if (path === "/api/cache/purge" && method === "POST") {
+    if (!verifyAdmin(req)) {
+      return Response.json({ error: "Unauthorized: Purging cache requires admin privileges." }, { status: 403 });
+    }
     const changes = semanticCache.purge();
     return Response.json({ success: true, purgedCount: changes });
   }
@@ -94,6 +122,13 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
   }
 
   if (path === "/api/keys" && method === "POST") {
+    if (!verifyAdmin(req)) {
+      return Response.json(
+        { error: "Forbidden: Generating virtual API keys is locked to administrators to protect upstream quota." },
+        { status: 403 }
+      );
+    }
+
     const body = (await req.json().catch(() => ({}))) as any;
     const name = body.name || "New API Key";
     const spendLimit = Number(body.spendLimitUsd) || 50.0;
@@ -117,7 +152,7 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
       key: {
         id: keyId,
         name,
-        rawSecret, // Shown ONLY once upon creation!
+        rawSecret,
         prefix,
         spendLimitUsd: spendLimit,
         rateLimitRpm: rateLimit,
@@ -126,6 +161,9 @@ export async function handleConsoleApi(req: Request, path: string): Promise<Resp
   }
 
   if (path.startsWith("/api/keys/") && method === "DELETE") {
+    if (!verifyAdmin(req)) {
+      return Response.json({ error: "Unauthorized: Revoking keys requires admin privileges." }, { status: 403 });
+    }
     const keyId = path.replace("/api/keys/", "");
     db.query("UPDATE virtual_keys SET is_active = 0 WHERE id = ?").run(keyId);
     return Response.json({ success: true, message: "Virtual key revoked" });

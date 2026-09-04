@@ -79,10 +79,54 @@ export function App() {
   const [createdSecret, setCreatedSecret] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
 
+  // Admin Mode state
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminInput, setAdminInput] = useState("");
+  const [adminError, setAdminError] = useState("");
+
   // Cache test sandbox state
   const [cacheTestQuery, setCacheTestQuery] = useState("");
   const [cacheTestResult, setCacheTestResult] = useState<any | null>(null);
   const [thresholdInput, setThresholdInput] = useState("0.90");
+
+  useEffect(() => {
+    const saved = sessionStorage.getItem("albatross_admin_key");
+    if (saved) {
+      setAdminPassword(saved);
+      setIsAdmin(true);
+    }
+  }, []);
+
+  const handleVerifyAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminError("");
+    try {
+      const res = await fetch("/api/admin/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: adminInput }),
+      });
+      if (res.ok) {
+        sessionStorage.setItem("albatross_admin_key", adminInput);
+        setAdminPassword(adminInput);
+        setIsAdmin(true);
+        setShowAdminModal(false);
+        setAdminInput("");
+      } else {
+        setAdminError("Invalid admin password. Default is set in .env");
+      }
+    } catch (err: any) {
+      setAdminError("Verification failed.");
+    }
+  };
+
+  const handleAdminLogout = () => {
+    sessionStorage.removeItem("albatross_admin_key");
+    setAdminPassword("");
+    setIsAdmin(false);
+  };
 
   const fetchOverview = async () => {
     try {
@@ -158,37 +202,56 @@ export function App() {
   };
 
   const handleTripProvider = async (providerId: string) => {
+    if (!isAdmin) {
+      setShowAdminModal(true);
+      return;
+    }
     await fetch("/api/providers/simulate-trip", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-admin-key": adminPassword },
       body: JSON.stringify({ providerId }),
     });
     fetchOverview();
   };
 
   const handleResetProvider = async (providerId: string) => {
+    if (!isAdmin) {
+      setShowAdminModal(true);
+      return;
+    }
     await fetch("/api/providers/reset", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-admin-key": adminPassword },
       body: JSON.stringify({ providerId }),
     });
     fetchOverview();
   };
 
   const handlePurgeCache = async () => {
+    if (!isAdmin) {
+      setShowAdminModal(true);
+      return;
+    }
     if (confirm("Are you sure you want to purge the entire semantic cache?")) {
-      await fetch("/api/cache/purge", { method: "POST" });
+      await fetch("/api/cache/purge", {
+        method: "POST",
+        headers: { "x-admin-key": adminPassword },
+      });
       fetchCache();
       fetchOverview();
     }
   };
 
   const handleSaveThreshold = async () => {
+    if (!isAdmin) {
+      setShowAdminModal(true);
+      return;
+    }
     const val = parseFloat(thresholdInput);
     if (!isNaN(val)) {
       await fetch("/api/cache/threshold", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-admin-key": adminPassword },
         body: JSON.stringify({ threshold: val }),
       });
       fetchCache();
@@ -197,9 +260,13 @@ export function App() {
 
   const handleCreateKey = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) {
+      setShowAdminModal(true);
+      return;
+    }
     const res = await fetch("/api/keys", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-admin-key": adminPassword },
       body: JSON.stringify({
         name: newKeyName,
         spendLimitUsd: newKeySpend,
@@ -210,12 +277,22 @@ export function App() {
       const data = await res.json();
       setCreatedSecret(data.key.rawSecret);
       fetchKeys();
+    } else {
+      const err = await res.json();
+      alert(err.error || "Failed to generate key. Admin verification required.");
     }
   };
 
   const handleRevokeKey = async (keyId: string) => {
+    if (!isAdmin) {
+      setShowAdminModal(true);
+      return;
+    }
     if (confirm("Revoke this virtual API key? Applications using it will immediately receive 403.")) {
-      await fetch(`/api/keys/${keyId}`, { method: "DELETE" });
+      await fetch(`/api/keys/${keyId}`, {
+        method: "DELETE",
+        headers: { "x-admin-key": adminPassword },
+      });
       fetchKeys();
     }
   };
@@ -229,16 +306,22 @@ export function App() {
     const startTime = performance.now();
 
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: "Bearer sk-albatross-root-master-key",
+      };
+      if (isAdmin && adminPassword) {
+        headers["x-admin-key"] = adminPassword;
+      }
+
       const response = await fetch("/v1/chat/completions", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer sk-albatross-root-master-key",
-        },
+        headers,
         body: JSON.stringify({
           model: playgroundModel,
           messages: [{ role: "user", content: promptInput }],
           stream: isStreaming,
+          max_tokens: 250, // strict 250 token cap on public playground
         }),
       });
 
@@ -358,6 +441,27 @@ export function App() {
             <span className="text-zinc-600">|</span>
             <span className="text-zinc-400">P50: {overview?.percentiles.p50 || 0}ms</span>
           </div>
+
+          {/* Admin Mode Badge & Button */}
+          {isAdmin ? (
+            <button
+              onClick={handleAdminLogout}
+              className="px-2.5 py-1 rounded text-xs font-mono flex items-center gap-1.5 border border-emerald-800/60 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-900/50 transition"
+              title="Click to Logout from Admin Mode"
+            >
+              <Lock className="w-3 h-3 text-emerald-400" />
+              <span>ADMIN UNLOCKED</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowAdminModal(true)}
+              className="px-2.5 py-1 rounded text-xs font-mono flex items-center gap-1.5 border border-infra-800 bg-infra-850 text-zinc-400 hover:text-white hover:border-zinc-700 transition"
+              title="Click to Authenticate as Admin"
+            >
+              <Lock className="w-3 h-3 text-zinc-500" />
+              <span>PUBLIC DEMO</span>
+            </button>
+          )}
 
           <button
             onClick={() => {
@@ -1024,10 +1128,21 @@ export function App() {
                 </p>
               </div>
               <button
-                onClick={() => setShowKeyModal(true)}
-                className="px-3 py-1.5 rounded bg-white text-zinc-950 font-medium text-xs flex items-center gap-1.5 hover:bg-zinc-200 transition"
+                onClick={() => {
+                  if (!isAdmin) {
+                    setShowAdminModal(true);
+                  } else {
+                    setShowKeyModal(true);
+                  }
+                }}
+                className={`px-3 py-1.5 rounded font-medium text-xs flex items-center gap-1.5 transition ${
+                  isAdmin
+                    ? "bg-white text-zinc-950 hover:bg-zinc-200"
+                    : "bg-infra-850 text-zinc-400 hover:text-white border border-infra-800"
+                }`}
               >
-                <Plus className="w-3.5 h-3.5" /> Create Key
+                {isAdmin ? <Plus className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                <span>{isAdmin ? "Create Key" : "Unlock Admin to Create Key"}</span>
               </button>
             </div>
 
@@ -1048,7 +1163,9 @@ export function App() {
                   {keys.map((k) => (
                     <tr key={k.id} className="hover:bg-infra-850/60">
                       <td className="py-2.5 px-3 font-semibold text-white">{k.name}</td>
-                      <td className="py-2.5 px-3 text-zinc-400">{k.prefix}</td>
+                      <td className="py-2.5 px-3 text-zinc-400 font-mono">
+                        {!isAdmin && k.prefix.includes("root") ? "sk-albatross-root-****" : k.prefix}
+                      </td>
                       <td className="py-2.5 px-3">
                         <div className="space-y-1">
                           <div className="flex justify-between text-[11px]">
@@ -1078,13 +1195,15 @@ export function App() {
                         )}
                       </td>
                       <td className="py-2.5 px-3">
-                        {k.isActive && (
+                        {isAdmin && k.isActive ? (
                           <button
                             onClick={() => handleRevokeKey(k.id)}
                             className="text-red-400 hover:text-red-300 text-[11px]"
                           >
                             Revoke
                           </button>
+                        ) : (
+                          <span className="text-zinc-600 text-[10px]">—</span>
                         )}
                       </td>
                     </tr>
@@ -1105,8 +1224,8 @@ export function App() {
 {`from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:8788/v1",
-    api_key="sk-albatross-root-master-key"
+    base_url="https://albatross-gateway.style.dev/v1",
+    api_key="sk-albatross-your-key-here"  # Generated by Administrator
 )
 
 response = client.chat.completions.create(
@@ -1119,8 +1238,8 @@ response = client.chat.completions.create(
                 <div className="space-y-1.5">
                   <span className="text-zinc-400 text-[11px]">cURL Terminal</span>
                   <pre className="p-3 rounded bg-infra-950 border border-infra-800 text-zinc-300 text-[11px] overflow-x-auto">
-{`curl -X POST http://localhost:8788/v1/chat/completions \\
-  -H "Authorization: Bearer sk-albatross-root-master-key" \\
+{`curl -X POST https://albatross-gateway.style.dev/v1/chat/completions \\
+  -H "Authorization: Bearer sk-albatross-your-key-here" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "albatross-auto",
@@ -1378,6 +1497,62 @@ response = client.chat.completions.create(
           </div>
         )}
       </main>
+
+      {/* Admin Authentication Modal */}
+      {showAdminModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-infra-900 border border-infra-800 rounded-lg max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-infra-800 pb-3">
+              <div className="flex items-center space-x-2.5">
+                <Lock className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-sm font-semibold text-white font-mono">Unlock Administrator Mode</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setShowAdminModal(false);
+                  setAdminError("");
+                  setAdminInput("");
+                }}
+                className="p-1 rounded text-zinc-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-zinc-400 font-mono leading-relaxed">
+              Virtual API key generation and system controls are restricted to administrators to prevent public abuse of upstream LLM quotas.
+            </p>
+
+            <form onSubmit={handleVerifyAdmin} className="space-y-3 font-mono text-xs">
+              <div>
+                <label className="block text-zinc-400 mb-1">Admin Password</label>
+                <input
+                  type="password"
+                  required
+                  autoFocus
+                  value={adminInput}
+                  onChange={(e) => setAdminInput(e.target.value)}
+                  placeholder="Enter administrator password..."
+                  className="w-full bg-infra-950 border border-infra-700 rounded p-2.5 text-white focus:outline-none focus:border-zinc-500"
+                />
+              </div>
+
+              {adminError && (
+                <div className="p-2 rounded bg-red-950/40 border border-red-800/60 text-red-300 text-[11px]">
+                  {adminError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                className="w-full py-2 bg-white text-zinc-950 font-semibold rounded hover:bg-zinc-200 transition"
+              >
+                Authenticate & Unlock
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="border-t border-infra-800 py-3 px-6 text-xs text-zinc-500 font-mono flex items-center justify-between">

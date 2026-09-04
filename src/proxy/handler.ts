@@ -66,6 +66,11 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
   const messages = body.messages || [];
   const isStream = body.stream === true;
 
+  // Enforce token generation ceiling for public requests to prevent quota draining
+  if (!auth.isAdmin && (!body.max_tokens || body.max_tokens > CONFIG.MAX_PUBLIC_TOKENS)) {
+    body.max_tokens = CONFIG.MAX_PUBLIC_TOKENS;
+  }
+
   // 2. In-Flight Guardrails & PII Sanitizer
   const guardStart = performance.now();
   const { sanitizedMessages, totalRedacted, allEntities, isInjectionRisk, injectionFlags } =
